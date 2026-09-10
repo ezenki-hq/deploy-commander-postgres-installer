@@ -136,7 +136,13 @@ export async function installPostgres(deps: InstallationWorkflowDeps): Promise<v
   } catch (error) {
     if (isRecord(error) && error.name === 'AbortError') throw error;
     if (isRecord(error) && error.status === RUN_FAILED) {
-      await transitionPrimaryState(deps.caller, operation, 'install-running', 'install-failed').catch(() => undefined);
+      try {
+        // A confirmed runner failure means the installation did not complete.
+        // Remove the private record so the manager can safely offer install again.
+        await deletePrimaryState(deps.caller, operation);
+      } catch {
+        throw new Error('PostgreSQL installation requires recovery');
+      }
     }
     throw new Error(INSTALL_ERROR);
   }
@@ -270,7 +276,7 @@ export async function recoverInstallationOnBoot(
     const status = await exactStatus(deps.caller, state.runId);
     if (status === 0 || status === 1) return { kind: 'busy' };
     if (status === RUN_FAILED) {
-      await transitionPrimaryState(deps.caller, state.operationId, 'install-running', 'install-failed');
+      await deletePrimaryState(deps.caller, state.operationId);
       return { kind: 'retry' };
     }
     const resource = await findPrimaryResource(deps.caller);
@@ -278,6 +284,10 @@ export async function recoverInstallationOnBoot(
     await transitionPrimaryState(deps.caller, state.operationId, 'install-running', {
       phase: 'ready', runId: state.runId, resourceId: resource.id, initializedAt: new Date().toISOString(),
     });
+    return { kind: 'retry' };
+  }
+  if (state.phase === 'install-failed') {
+    await deletePrimaryState(deps.caller, state.operationId);
     return { kind: 'retry' };
   }
   return null;

@@ -68,10 +68,12 @@ describe('installPostgres', () => {
     expect((d.caller.databaseQuery as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([query]) => String(query).startsWith('CREATE postgres_state:primary'))).toBe(true);
   });
 
-  it('marks a failed run install-failed and does not expose run details', async () => {
+  it('clears private state after a failed run so installation can be retried', async () => {
     const d = deps({ waitForRun: vi.fn().mockRejectedValue(Object.assign(new Error('private output'), { status: 3 })) });
     await expect(installPostgres(d)).rejects.not.toThrow(/private|secret/i);
-    expect((d.caller.databaseQuery as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([, b]) => b && (b as Record<string, unknown>).next_phase === 'install-failed')).toBe(true);
+    const calls = (d.caller.databaseQuery as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.some(([query]) => String(query).startsWith('DELETE postgres_state:primary'))).toBe(true);
+    expect(calls.some(([, b]) => b && (b as Record<string, unknown>).next_phase === 'install-failed')).toBe(false);
   });
 });
 
@@ -119,6 +121,21 @@ describe('teardownPostgres', () => {
 });
 
 describe('lifecycle boot recovery', () => {
+  it('removes a persisted install-failed state and permits a fresh install', async () => {
+    const d = deps({ caller: {
+      ...(deps().caller as unknown as Record<string, unknown>),
+      databaseQuery: vi.fn().mockImplementation((query: string, bindings: Record<string, unknown>) => {
+        if (query.startsWith('SELECT phase')) return databaseResult([{
+          phase: 'install-failed', operation_id: 'install-1', admin_username: 'pg_admin_0123456789abcdef0123456789abcdef', admin_password: 'secret', run_id: null, resource_id: null, initialized_at: null, updated_at: 'now',
+        }]);
+        return databaseResult([bindings.operation_id ?? 'install-1']);
+      }),
+    } as unknown as RPCCaller });
+
+    await expect(recoverInstallationOnBoot(d)).resolves.toEqual({ kind: 'retry' });
+    expect((d.caller.databaseQuery as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([query]) => String(query).startsWith('DELETE postgres_state:primary'))).toBe(true);
+  });
+
   it('reconciles an install-prepared state by exact note instead of leaving the app permanently busy', async () => {
     const d = deps({ caller: {
       ...(deps().caller as unknown as Record<string, unknown>),

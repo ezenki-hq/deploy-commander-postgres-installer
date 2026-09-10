@@ -267,6 +267,19 @@ describe('App lifecycle and resource routing', () => {
     expect(screen.queryByText('Unable to complete PostgreSQL lifecycle action')).not.toBeInTheDocument();
   });
 
+  it('keeps installation retryable after a confirmed installation failure', async () => {
+    vi.spyOn(installationLifecycle, 'installPostgres')
+      .mockRejectedValue(new Error('PostgreSQL installation failed'));
+    const current = appClient();
+    render(<App createClient={() => current} />);
+    await screen.findByRole('button', { name: 'Install PostgreSQL' });
+
+    screen.getByRole('button', { name: 'Install PostgreSQL' }).click();
+    expect(await screen.findByRole('heading', { name: 'PostgreSQL installation failed' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Install PostgreSQL' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Retry recovery' })).not.toBeInTheDocument();
+  });
+
   it('uses resource and private state instead of unrelated run events', async () => {
     const client = appClient();
     const factory: AppClientFactory = () => client;

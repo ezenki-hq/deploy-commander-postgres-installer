@@ -101,6 +101,14 @@ export default function ManagerDashboard({
         The previous teardown run failed. Retry teardown to remove this installation safely.
       </StatusPanel>
     );
+  } else if (error && failedAction === 'install') {
+    content = (
+      <StatusPanel tone="danger" eyebrow="Installation failed" title="PostgreSQL installation failed" role="alert" actions={(
+        <ActionButton tone="primary" disabled={busy} onClick={onInstall}>Install PostgreSQL</ActionButton>
+      )}>
+        {error}
+      </StatusPanel>
+    );
   } else if (error) {
     content = (
       <StatusPanel tone="danger" eyebrow="Attention required" title="PostgreSQL manager needs attention" role="alert" actions={(

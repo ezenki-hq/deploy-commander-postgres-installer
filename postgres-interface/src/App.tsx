@@ -292,7 +292,12 @@ export default function App({ createClient = productionClient }: AppProps) {
     }
     catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return;
-      setFailedAction(kind === 'teardown' && error instanceof Error && error.message === 'PostgreSQL teardown failed' ? kind : null);
+      setFailedAction(
+        error instanceof Error && (
+          (kind === 'install' && error.message === 'PostgreSQL installation failed')
+          || (kind === 'teardown' && error.message === 'PostgreSQL teardown failed')
+        ) ? kind : null,
+      );
       setActionError(error instanceof Error && error.message.includes('recovery') ? 'PostgreSQL recovery is required' : 'Unable to complete PostgreSQL lifecycle action');
     }
     finally {

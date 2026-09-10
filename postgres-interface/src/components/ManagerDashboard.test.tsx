@@ -41,6 +41,15 @@ describe('ManagerDashboard', () => {
     expect(onInstall).toHaveBeenCalledOnce();
   });
 
+  it('shows an installation failure while still allowing a fresh install', () => {
+    const onInstall = vi.fn();
+    renderDashboard({ error: 'PostgreSQL installation failed', failedAction: 'install', onInstall });
+    expect(screen.getByRole('alert')).toHaveTextContent('PostgreSQL installation failed');
+    fireEvent.click(screen.getByRole('button', { name: 'Install PostgreSQL' }));
+    expect(onInstall).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: 'Retry recovery' })).not.toBeInTheDocument();
+  });
+
   it('shows the installed card and requires confirmation before teardown', () => {
     const onTeardown = vi.fn();
     renderDashboard({ resource, primary, permissionRemembered: true, onTeardown });
