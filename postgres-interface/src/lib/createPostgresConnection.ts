@@ -8,6 +8,7 @@ import { findCorrelatedRun, readExactRun, readLatestRun, type RunStatus } from '
 import { makeCleanupNote, makeProvisionNote, parseCleanupRun, parseProvisionRun } from './connectionRuns';
 import { waitForRun, type RunEventSource } from './runMonitor';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
+import { buildInstallPlan } from './installPlan';
 
 export interface ConnectionRequest {
   currentManagerId: string;
@@ -57,6 +58,25 @@ async function start(deps: ConnectionWorkflowDeps, action: 'create-connection' |
   if (!id) { const match = await findCorrelatedRun(deps.caller, action, note); if (match.kind !== 'found') throw new Error(action === 'create-connection' ? START_ERROR : CLEANUP_ERROR); id = match.id; }
   return id;
 }
+async function install(deps: ConnectionWorkflowDeps): Promise<PostgresInstallation> {
+  const administrator = (deps.generateAdminCredentials ?? (() => { throw recovery(); }))();
+  const note = `postgres-install:${operationId()}`;
+  let runId = startedId(await deps.caller.start('create', IMAGE, buildInstallPlan(administrator), note).catch(() => null));
+  if (!runId) {
+    const match = await findCorrelatedRun(deps.caller, 'create', note);
+    if (match.kind !== 'found') throw new Error(START_ERROR);
+    runId = match.id;
+  }
+  try { await wait(deps, runId); } catch (error) {
+    if (isAbort(error)) throw error;
+    throw new Error('PostgreSQL installation failed');
+  }
+  // The runner-created resource is authoritative. Never continue with the
+  // pre-install request or credentials after the run completes.
+  const refreshed = await resources(deps.caller);
+  if (!refreshed) throw recovery();
+  return refreshed;
+}
 async function wait(deps: ConnectionWorkflowDeps, runId: string): Promise<RPC.GetRun> { return deps.waitForRun(deps.caller, deps.events, runId, { signal: deps.signal }); }
 function matching(connection: RPC.CreateConnection, database: string, username: string): boolean { return record(connection.config) && record(connection.config.metadata) && connection.config.metadata.database === database && connection.config.metadata.username === username; }
 async function cleanupRetry(deps: ConnectionWorkflowDeps, installation: PostgresInstallation, identity: { operationId: string; callerId: string; resourceId: string }, database: string, username: string): Promise<void> {
@@ -94,12 +114,19 @@ export async function reconcileLatestConnectionRun(deps: ConnectionWorkflowDeps,
 }
 export async function createPostgresConnection(deps: ConnectionWorkflowDeps, request: ConnectionRequest): Promise<RPC.CreateConnection> {
   aborted(deps.signal); if (!nonBlank(request.currentManagerId) || !nonBlank(request.callingManagerId)) throw new Error('A calling manager is required');
-  const installation = await resources(deps.caller); if (!installation) throw recovery();
-  const found = await existing(deps, installation, request.callingManagerId); if (found) return found;
-  const recovered = await reconcileLatestConnectionRun(deps, await readLatestRun(deps.caller), request.callingManagerId); if (recovered?.kind === 'connection') return recovered.value;
+  let installation = await resources(deps.caller);
+  if (installation) {
+    const found = await existing(deps, installation, request.callingManagerId); if (found) return found;
+    const recovered = await reconcileLatestConnectionRun(deps, await readLatestRun(deps.caller), request.callingManagerId); if (recovered?.kind === 'connection') return recovered.value;
+  }
   aborted(deps.signal);
-  let allowed = isPermissionRemembered(deps.storage, request.currentManagerId, installation.resource.id);
-  if (!allowed) { const decision = await deps.requestPermission({ installsPostgres: false }); if (!decision || typeof decision.allowed !== 'boolean' || typeof decision.remember !== 'boolean') throw new Error('Invalid permission decision'); if (!decision.allowed) throw new Error('Database access was cancelled'); allowed = true; if (decision.remember) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
+  const permissionResourceId = installation?.resource.id ?? 'not-installed';
+  let allowed = isPermissionRemembered(deps.storage, request.currentManagerId, permissionResourceId);
+  if (!allowed) { const decision = await deps.requestPermission({ installsPostgres: installation === null }); if (!decision || typeof decision.allowed !== 'boolean' || typeof decision.remember !== 'boolean') throw new Error('Invalid permission decision'); if (!decision.allowed) throw new Error('Database access was cancelled'); allowed = true; if (decision.remember && installation) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
+  if (!installation) { installation = await install(deps); }
+  // Always use the post-install resource configuration, including its current
+  // administrator and platform connection, for all subsequent RPCs.
+  installation = await resources(deps.caller) ?? (() => { throw recovery(); })();
   aborted(deps.signal); const logical = deps.generateCredentials(); const plan = buildProvisionPlan(installation.credentials, logical, installation.platform); const identity = { operationId: operationId(), callerId: request.callingManagerId, resourceId: installation.resource.id };
   const runId = await start(deps, 'create-connection', plan, makeProvisionNote(identity));
   try { await wait(deps, runId); } catch (e) { if (isAbort(e)) throw e; if (record(e) && e.status === 3) { await cleanupRetry(deps, installation, identity, logical.database, logical.username); throw new Error(RUN_ERROR); } throw new Error(RUN_ERROR); }

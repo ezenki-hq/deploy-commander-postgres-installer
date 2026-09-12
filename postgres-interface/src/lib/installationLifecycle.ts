@@ -1,7 +1,7 @@
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import { generateAdminCredentials, type AdminCredentials } from './credentials';
 import { buildInstallPlan } from './installPlan';
-import { findCorrelatedRun } from './recoverProvisioning';
+import { findCorrelatedRun } from './postgresRuns';
 import { waitForRun, type RunEventSource } from './runMonitor';
 import {
   createPrimaryState,
