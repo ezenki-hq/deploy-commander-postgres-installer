@@ -11,6 +11,7 @@ export type ConnectionNote = ({ kind: 'provision' } | { kind: 'cleanup' }) & Con
 const OPERATION_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const DATABASE = /^db_[0-9a-f]{32}$/;
 const USERNAME = /^pg_user_[0-9a-f]{32}$/;
+const ADMIN_USERNAME = /^pg_admin_[0-9a-f]{32}$/;
 type UnknownRecord = Record<string, unknown>;
 const isRecord = (v: unknown): v is UnknownRecord => typeof v === 'object' && v !== null && !Array.isArray(v);
 const recovery = (): PostgresRecoveryRequiredError => new PostgresRecoveryRequiredError();
@@ -54,14 +55,23 @@ function readTarget(environment: UnknownRecord): { database: string; username: s
   if (typeof environment.TARGET_DATABASE !== 'string' || !DATABASE.test(environment.TARGET_DATABASE) || typeof environment.TARGET_USERNAME !== 'string' || !USERNAME.test(environment.TARGET_USERNAME)) throw recovery();
   return { database: environment.TARGET_DATABASE, username: environment.TARGET_USERNAME };
 }
+function validateAdminEnvironment(environment: UnknownRecord): void {
+  if (environment.PGHOST !== 'postgres' || environment.PGPORT !== '5432' || environment.PGDATABASE !== 'postgres'
+    || typeof environment.PGUSER !== 'string' || !ADMIN_USERNAME.test(environment.PGUSER)
+    || typeof environment.PGPASSWORD !== 'string' || environment.PGPASSWORD.trim().length === 0) {
+    throw recovery();
+  }
+}
 const identityOf = (note: ConnectionNote): ConnectionOperationIdentity => ({ operationId: note.operationId, callerId: note.callerId, resourceId: note.resourceId });
 
 export function parseProvisionRun(value: unknown): ProvisionRunRecord {
   const parsed = readRun(value, 'create-connection'); const target = readTarget(parsed.environment);
+  validateAdminEnvironment(parsed.environment);
   if (typeof parsed.environment.TARGET_PASSWORD !== 'string' || parsed.environment.TARGET_PASSWORD.trim().length === 0) throw recovery();
   return { identity: identityOf(parsed.note), runId: parsed.run.id, status: parsed.status, logical: { ...target, password: parsed.environment.TARGET_PASSWORD } };
 }
 export function parseCleanupRun(value: unknown): CleanupRunRecord {
   const parsed = readRun(value, 'cleanup-connection');
+  validateAdminEnvironment(parsed.environment);
   return { identity: identityOf(parsed.note), runId: parsed.run.id, status: parsed.status, ...readTarget(parsed.environment) };
 }

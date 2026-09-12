@@ -17,3 +17,9 @@ Implemented and committed in worktree `.worktrees/postgres-run-backed-state`.
 - Focused tests: `npx vitest run src/lib/connectionRuns.test.ts src/lib/postgresPlans.test.ts` — 2 files, 20 tests passed.
 - TypeScript: `npx tsc -b --pretty false` — passed.
 - Lint: `npm run lint -- --max-warnings=0` — passed.
+
+## Review fix
+
+- Tightened both provision and cleanup parsers to require the complete administrator environment (`PGHOST=postgres`, `PGPORT=5432`, `PGDATABASE=postgres`, generated `PGUSER`, and nonblank `PGPASSWORD`).
+- Added missing/malformed administrator environment regression cases.
+- Review-fix verification: focused suite — 2 files, 25 tests passed; lint and `git diff --check` passed.
