@@ -68,7 +68,7 @@ async function query(sql: string): Promise<string> {
 
 describe.skipIf(!container)('opt-in PostgreSQL provisioning integration', () => {
   it('provisions idempotently, scopes privileges, and cleans up', async () => {
-    const provision = buildProvisionPlan(primary, logical, platform);
+    const provision = buildProvisionPlan(primary.credentials, logical, platform);
     const service = provision.services?.['postgres-admin'];
     if (!service) throw new Error('Provisioning service is missing');
     const command = service.command;
@@ -84,7 +84,7 @@ describe.skipIf(!container)('opt-in PostgreSQL provisioning integration', () => 
     expect(await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${logical.database}'`)).toBe(logical.username);
     expect(await query(`SELECT has_database_privilege('${logical.username}', '${logical.database}', 'CREATE')`)).toBe('t');
 
-    const cleanup = buildCleanupPlan(primary, logical.database, logical.username, platform);
+    const cleanup = buildCleanupPlan(primary.credentials, logical.database, logical.username, platform);
     const cleanupService = cleanup.services?.['postgres-admin'];
     if (!cleanupService) throw new Error('Cleanup service is missing');
     const cleanupCommand = cleanupService.command;

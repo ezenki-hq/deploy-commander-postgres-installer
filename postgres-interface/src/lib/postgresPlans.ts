@@ -1,5 +1,4 @@
-import type { LogicalCredentials } from './credentials';
-import type { PrimaryState } from './primaryState';
+import type { AdminCredentials, LogicalCredentials } from './credentials';
 import {
   parsePlatformConnection,
   type PlatformConnection,
@@ -109,12 +108,10 @@ function assertGeneratedUsername(value: unknown): asserts value is string {
   }
 }
 
-function validatePrimary(primary: PrimaryState): void {
-  if (typeof primary !== 'object' || primary === null || primary.phase !== 'ready') {
-    throw new Error('Invalid ready PostgreSQL state');
-  }
-  assertIdentifier(primary.credentials?.username, 'administrator username');
-  assertNonBlank(primary.credentials?.password, 'administrator password');
+function validateAdministrator(administrator: AdminCredentials): void {
+  if (typeof administrator !== 'object' || administrator === null) throw new Error('Invalid administrator credentials');
+  assertIdentifier(administrator.username, 'administrator username');
+  assertNonBlank(administrator.password, 'administrator password');
 }
 
 function validateLogical(logical: LogicalCredentials): void {
@@ -126,23 +123,23 @@ function validateLogical(logical: LogicalCredentials): void {
   assertNonBlank(logical.password, 'logical password');
 }
 
-function adminEnvironment(primary: PrimaryState): Record<string, string> {
+function adminEnvironment(administrator: AdminCredentials): Record<string, string> {
   return {
     PGHOST: 'postgres',
     PGPORT: '5432',
     PGDATABASE: 'postgres',
-    PGUSER: primary.credentials.username,
-    PGPASSWORD: primary.credentials.password,
+    PGUSER: administrator.username,
+    PGPASSWORD: administrator.password,
   };
 }
 
 function buildAdminService(
-  primary: PrimaryState,
+  administrator: AdminCredentials,
   platform: PlatformConnection,
   command: string[],
   target: Record<string, string>,
 ): RunnerMetadata {
-  validatePrimary(primary);
+  validateAdministrator(administrator);
   const validatedPlatform = parsePlatformConnection(platform);
   return {
     services: {
@@ -150,7 +147,7 @@ function buildAdminService(
         image: 'postgres:15',
         role: 'runner',
         connections: [validatedPlatform],
-        environment: { ...adminEnvironment(primary), ...target },
+        environment: { ...adminEnvironment(administrator), ...target },
         command,
       },
     },
@@ -158,12 +155,12 @@ function buildAdminService(
 }
 
 export function buildProvisionPlan(
-  primary: PrimaryState,
+  administrator: AdminCredentials,
   logical: LogicalCredentials,
   platform: PlatformConnection,
 ): RunnerMetadata {
   validateLogical(logical);
-  return buildAdminService(primary, platform, ['sh', '-ceu', PROVISION_SCRIPT], {
+  return buildAdminService(administrator, platform, ['sh', '-ceu', PROVISION_SCRIPT], {
     TARGET_DATABASE: logical.database,
     TARGET_USERNAME: logical.username,
     TARGET_PASSWORD: logical.password,
@@ -171,14 +168,14 @@ export function buildProvisionPlan(
 }
 
 export function buildCleanupPlan(
-  primary: PrimaryState,
+  administrator: AdminCredentials,
   database: string,
   username: string,
   platform: PlatformConnection,
 ): RunnerMetadata {
   assertGeneratedDatabase(database);
   assertGeneratedUsername(username);
-  return buildAdminService(primary, platform, ['sh', '-ceu', CLEANUP_SCRIPT], {
+  return buildAdminService(administrator, platform, ['sh', '-ceu', CLEANUP_SCRIPT], {
     TARGET_DATABASE: database,
     TARGET_USERNAME: username,
   });

@@ -220,7 +220,7 @@ async function cleanUpRacedProvision(
     started = await deps.caller.start(
       'cleanup-connection',
       RUNNER_IMAGE,
-      buildCleanupPlan(request.primary, credentials.database, credentials.username, platform),
+      buildCleanupPlan(request.primary.credentials, credentials.database, credentials.username, platform),
       `postgres-cleanup:${operation.operationId}`,
     );
   } catch {
@@ -305,7 +305,7 @@ export async function createPostgresConnection(
 
   const credentials = deps.generateCredentials();
   // Validate all secret-bearing inputs before creating the durable journal record.
-  buildProvisionPlan(request.primary, credentials, platform);
+  buildProvisionPlan(request.primary.credentials, credentials, platform);
   const operation = makeOperation(request, credentials);
   // Generated credentials are local values and are deliberately not attached to errors.
   await acquireOperation(deps.caller, operation);
@@ -319,7 +319,7 @@ export async function createPostgresConnection(
   let plan: ReturnType<typeof buildProvisionPlan>;
   try {
     revalidatedInstallation = await revalidateInstallation(deps.caller, request);
-    plan = buildProvisionPlan(revalidatedInstallation.primary, credentials, revalidatedInstallation.platform);
+    plan = buildProvisionPlan(revalidatedInstallation.primary.credentials, credentials, revalidatedInstallation.platform);
   } catch (error) {
     await discardOperation(deps.caller, operation);
     throw error;

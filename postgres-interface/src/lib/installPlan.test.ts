@@ -3,7 +3,7 @@ import type { AdminCredentials } from './credentials';
 import { buildInstallPlan } from './installPlan';
 
 describe('buildInstallPlan', () => {
-  it('builds the persistent PostgreSQL runner plan without putting credentials in resource metadata', () => {
+  it('stores administrator credentials in resource metadata for recovery', () => {
     const credentials: AdminCredentials = {
       username: 'pg_admin_example',
       password: 'secret-password',
@@ -25,7 +25,7 @@ describe('buildInstallPlan', () => {
             {
               resource_type: 'postgres',
               name: 'postgres',
-              metadata: { engine: 'postgres', version: '15' },
+              metadata: { engine: 'postgres', version: '15', administrator: credentials },
             },
           ],
           volumes: [{ name: 'postgres-data', mount_path: '/var/lib/postgresql/data' }],
@@ -35,7 +35,7 @@ describe('buildInstallPlan', () => {
     });
 
     const resourceMetadata = plan.services?.postgres?.resources?.[0]?.metadata;
-    expect(JSON.stringify(resourceMetadata)).not.toContain(credentials.username);
-    expect(JSON.stringify(resourceMetadata)).not.toContain(credentials.password);
+    expect(resourceMetadata).toEqual({ engine: 'postgres', version: '15', administrator: credentials });
+    expect(JSON.stringify(resourceMetadata)).not.toContain('logical-password');
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { LogicalCredentials } from './credentials';
-import type { PrimaryState } from './primaryState';
 import type { PlatformConnection } from './postgresContracts';
 import {
   buildCleanupPlan,
@@ -10,15 +9,7 @@ import {
   PROVISION_SCRIPT,
 } from './postgresPlans';
 
-const primary: PrimaryState = {
-  phase: 'ready',
-  operationId: 'operation-1',
-  credentials: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-secret' },
-  runId: 'run-1',
-  resourceId: 'resource-1',
-  initializedAt: '2026-08-30T00:00:00.000Z',
-  updatedAt: '2026-08-30T00:00:00.000Z',
-};
+const administrator = { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-secret' };
 const logical: LogicalCredentials = {
   database: 'db_0123456789abcdef0123456789abcdef',
   username: 'pg_user_0123456789abcdef0123456789abcdef',
@@ -31,7 +22,7 @@ const platform: PlatformConnection = {
 
 describe('postgres administration plans', () => {
   it('builds an isolated runner-only provisioning plan with environment-bound values', () => {
-    const plan = buildProvisionPlan(primary, logical, platform);
+    const plan = buildProvisionPlan(administrator, logical, platform);
     expect(plan).toEqual({
       services: {
         'postgres-admin': {
@@ -42,8 +33,8 @@ describe('postgres administration plans', () => {
             PGHOST: 'postgres',
             PGPORT: '5432',
             PGDATABASE: 'postgres',
-            PGUSER: primary.credentials.username,
-            PGPASSWORD: primary.credentials.password,
+            PGUSER: administrator.username,
+            PGPASSWORD: administrator.password,
             TARGET_DATABASE: logical.database,
             TARGET_USERNAME: logical.username,
             TARGET_PASSWORD: logical.password,
@@ -54,7 +45,7 @@ describe('postgres administration plans', () => {
     });
     expect(plan.services?.postgres).toBeUndefined();
     expect(JSON.stringify(plan)).not.toContain('PostgreSQL provisioning failed:');
-    expect(PROVISION_SCRIPT).not.toContain(primary.credentials.password);
+    expect(PROVISION_SCRIPT).not.toContain(administrator.password);
     expect(PROVISION_SCRIPT).not.toContain(logical.password);
   });
 
@@ -112,7 +103,7 @@ fi`);
   });
 
   it('builds cleanup with session termination and fixed safe drop statements', () => {
-    const plan = buildCleanupPlan(primary, logical.database, logical.username, platform);
+    const plan = buildCleanupPlan(administrator, logical.database, logical.username, platform);
     expect(plan).toEqual({
       services: {
         'postgres-admin': {
@@ -123,8 +114,8 @@ fi`);
             PGHOST: 'postgres',
             PGPORT: '5432',
             PGDATABASE: 'postgres',
-            PGUSER: primary.credentials.username,
-            PGPASSWORD: primary.credentials.password,
+            PGUSER: administrator.username,
+            PGPASSWORD: administrator.password,
             TARGET_DATABASE: logical.database,
             TARGET_USERNAME: logical.username,
           },
@@ -136,7 +127,7 @@ fi`);
     expect(CLEANUP_SCRIPT).toContain("DROP DATABASE IF EXISTS %I");
     expect(CLEANUP_SCRIPT).toContain("DROP ROLE IF EXISTS %I");
     expect(CLEANUP_SCRIPT).toContain('PostgreSQL cleanup failed');
-    expect(CLEANUP_SCRIPT).not.toContain(primary.credentials.password);
+    expect(CLEANUP_SCRIPT).not.toContain(administrator.password);
   });
 
   it('returns runner-ready logical connection metadata', () => {
@@ -162,7 +153,7 @@ fi`);
     { ...logical, database: 'db;drop database postgres' },
     { ...logical, username: 'pg_user;drop role postgres' },
     { ...logical, password: '' },
-  ])('rejects unsafe logical credentials %j', (unsafe) => {
-    expect(() => buildProvisionPlan(primary, unsafe, platform)).toThrow();
+    ])('rejects unsafe logical credentials %j', (unsafe) => {
+    expect(() => buildProvisionPlan(administrator, unsafe, platform)).toThrow();
   });
 });

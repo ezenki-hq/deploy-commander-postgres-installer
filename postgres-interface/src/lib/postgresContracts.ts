@@ -22,7 +22,7 @@ export interface RunnerService {
   resources?: Array<{
     resource_type: string;
     name: string;
-    metadata: Record<string, string>;
+    metadata: Record<string, unknown>;
   }>;
   environment?: Record<string, string>;
   volumes?: Array<{

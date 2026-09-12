@@ -20,6 +20,7 @@ export function buildInstallPlan(credentials: AdminCredentials): RunnerMetadata 
             metadata: {
               engine: 'postgres',
               version: '15',
+              administrator: credentials,
             },
           },
         ],

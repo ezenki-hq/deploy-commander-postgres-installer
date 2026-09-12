@@ -158,7 +158,7 @@ async function cleanupRun(
     try {
       started = await deps.caller.start(
         'cleanup-connection', RUNNER_IMAGE,
-        buildCleanupPlan(deps.primary, operation.database, operation.username, deps.platform), note,
+        buildCleanupPlan(deps.primary.credentials, operation.database, operation.username, deps.platform), note,
       );
     } catch {
       const match = await findCorrelatedRun(deps.caller, 'cleanup-connection', note);
