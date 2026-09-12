@@ -1,4 +1,5 @@
 import type { RPCCaller } from '@ezenki/deploy-commander-installer-interface';
+import { OperationBusyError } from './postgresErrors';
 
 export type OperationKind = 'connection' | 'teardown';
 
@@ -142,13 +143,6 @@ const READ_QUERY = `SELECT kind, operation_id, caller_id, resource_id,
   created_at, updated_at FROM postgres_operation:current;`;
 
 const DELETE_QUERY = 'DELETE postgres_operation:current WHERE operation_id = $operation_id RETURN VALUE operation_id;';
-
-export class OperationBusyError extends Error {
-  constructor() {
-    super('A PostgreSQL operation is already in progress');
-    this.name = 'OperationBusyError';
-  }
-}
 
 export class OperationDatabaseError extends Error {
   constructor() {

@@ -9,8 +9,7 @@ import { createPostgresConnection, type PermissionDecision } from '../lib/create
 import type { ReadyPrimaryState } from '../lib/primaryState';
 import type { RunEventSource } from '../lib/runMonitor';
 import { waitForRun } from '../lib/runMonitor';
-import { OperationBusyError } from '../lib/provisioningJournal';
-import { PostgresRecoveryRequiredError } from '../lib/postgresErrors';
+import { OperationBusyError, PostgresRecoveryRequiredError } from '../lib/postgresErrors';
 
 export interface ConnectionRequestProps {
   caller?: RPCCaller;

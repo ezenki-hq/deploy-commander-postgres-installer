@@ -4,3 +4,10 @@ export class PostgresRecoveryRequiredError extends Error {
     this.name = 'PostgresRecoveryRequiredError';
   }
 }
+
+export class OperationBusyError extends Error {
+  constructor() {
+    super('A PostgreSQL operation is already in progress');
+    this.name = 'OperationBusyError';
+  }
+}

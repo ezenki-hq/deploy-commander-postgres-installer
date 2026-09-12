@@ -14,11 +14,11 @@ import {
 import {
   acquireOperation,
   deleteOperation,
-  OperationBusyError,
   readOperation,
   transitionOperation,
   type TeardownOperation,
 } from './provisioningJournal';
+import { OperationBusyError } from './postgresErrors';
 import { clearPermission } from './permissionPreference';
 
 const RUNNER_IMAGE = 'ezenki/deploy-commander-runner:latest';
