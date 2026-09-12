@@ -3,6 +3,7 @@ import { findExistingConnection } from './postgresConnectionContract';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
 import type { ReadyPrimaryState } from './primaryState';
 import { buildCleanupPlan } from './postgresPlans';
+import { findCorrelatedRun } from './postgresRuns';
 import {
   deleteOperation,
   readOperation,
@@ -12,7 +13,6 @@ import {
 import type { PlatformConnection } from './postgresContracts';
 import type { RunEventSource, WaitOptions } from './runMonitor';
 
-const PAGE_LIMIT = 50;
 const RUNNER_IMAGE = 'ezenki/deploy-commander-runner:latest';
 const STATUS_QUEUED = 0;
 const STATUS_RUNNING = 1;
@@ -57,7 +57,6 @@ export async function recoverJournalOperation(
   return recoverProvisioning(deps, operation);
 }
 
-type RunMatch = { kind: 'absent' } | { kind: 'ambiguous' } | { kind: 'found'; id: string };
 type UnknownRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -75,46 +74,6 @@ function validLogicalIdentifier(value: unknown, prefix: 'db' | 'pg_user'): value
 
 function recoveryError(): PostgresRecoveryRequiredError {
   return new PostgresRecoveryRequiredError();
-}
-
-function validatePage(value: unknown, offset: number): { items: UnknownRecord[]; limit: number; total: number } {
-  if (!isRecord(value) || !Array.isArray(value.items) || !value.items.every(isRecord)
-    || typeof value.limit !== 'number' || !Number.isSafeInteger(value.limit) || value.limit <= 0
-    || typeof value.offset !== 'number' || !Number.isSafeInteger(value.offset) || value.offset !== offset
-    || typeof value.total !== 'number' || !Number.isSafeInteger(value.total) || value.total < 0
-    || value.items.length > value.limit || value.items.length > value.total
-    || value.offset > value.total || value.offset + value.items.length > value.total
-    || (value.items.length === 0 && value.total > 0)
-    || (value.items.length < value.limit && value.offset + value.items.length < value.total)) {
-    throw recoveryError();
-  }
-  return { items: value.items, limit: value.limit, total: value.total };
-}
-
-/** Exhaustively finds exactly one accepted run for the operation's immutable note. */
-export async function findCorrelatedRun(caller: RPCCaller, action: string, note: string): Promise<RunMatch> {
-  let offset = 0;
-  const matches: string[] = [];
-  while (true) {
-    let response: unknown;
-    try {
-      response = await caller.getRuns(undefined, undefined, undefined, undefined, PAGE_LIMIT, offset);
-    } catch {
-      throw recoveryError();
-    }
-    const page = validatePage(response, offset);
-    for (const item of page.items) {
-      if (item.action === action && item.note === note) {
-        if (!nonBlank(item.id)) throw recoveryError();
-        matches.push(item.id);
-      }
-    }
-    if (page.items.length === 0 || offset + page.items.length >= page.total) break;
-    offset += page.limit;
-  }
-  if (matches.length === 0) return { kind: 'absent' };
-  if (matches.length !== 1) return { kind: 'ambiguous' };
-  return { kind: 'found', id: matches[0] };
 }
 
 async function runStatus(caller: RPCCaller, runId: string): Promise<number> {

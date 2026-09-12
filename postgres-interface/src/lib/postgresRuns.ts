@@ -15,16 +15,17 @@ const PAGE_LIMIT = 50;
 const fail = (): PostgresRecoveryRequiredError => new PostgresRecoveryRequiredError();
 const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const validStatus = (v: unknown): v is RunStatus => v === 0 || v === 1 || v === 2 || v === 3;
+const validAction = (v: unknown): v is string => v === 'create' || v === 'teardown' || v === 'create-connection' || v === 'cleanup-connection';
 
 function validRun(v: unknown): v is RPC.RunItem {
-  if (!record(v) || typeof v.id !== 'string' || v.id.trim() === '' || typeof v.action !== 'string' || v.action.trim() === '' || !validStatus(v.status)) return false;
+  if (!record(v) || typeof v.id !== 'string' || v.id.trim() === '' || !validAction(v.action) || !validStatus(v.status)) return false;
   for (const key of ['queued_at', 'created_at', 'updated_at']) if (typeof v[key] !== 'string' || v[key].trim() === '') return false;
   for (const key of ['started_at', 'finished_at', 'note']) if (v[key] !== undefined && typeof v[key] !== 'string') return false;
   return true;
 }
 function page(v: unknown, offset: number, limit: number): RPC.RunItem[] {
   if (!record(v) || v.limit !== limit || v.offset !== offset || !Number.isSafeInteger(v.total) || (v.total as number) < 0 || !Array.isArray(v.items) || v.items.length > limit || v.items.length > (v.total as number) || !v.items.every(validRun)) throw fail();
-  if (v.items.length === 0 && (v.total as number) > offset) throw fail();
+  if (offset > (v.total as number) || v.items.length === 0 && (v.total as number) > offset) throw fail();
   if (v.items.length < limit && offset + v.items.length < (v.total as number)) throw fail();
   return v.items;
 }
@@ -60,7 +61,7 @@ export async function readExactRun(caller: RPCCaller, runId: string): Promise<RP
   let result: unknown;
   try { result = await caller.getRun(runId); } catch { throw fail(); }
   if (!record(result) || !validRun(result.run) || result.run.id !== runId || !record(result.config) || result.config.run !== runId || typeof result.config.action !== 'string' || result.config.action !== result.run.action) throw fail();
-  return result as RPC.GetRun;
+  return result as unknown as RPC.GetRun;
 }
 export async function findCorrelatedRun(caller: RPCCaller, action: string, note: string): Promise<CorrelatedRun> {
   const matches: string[] = [];
