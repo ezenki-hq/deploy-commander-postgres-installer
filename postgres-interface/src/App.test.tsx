@@ -44,4 +44,15 @@ describe('run-backed App boot', () => {
     await waitFor(() => expect(screen.getByRole('heading', { name: 'PostgreSQL state needs recovery' })).toBeVisible());
   });
   it('ends the stable wire on unmount', async () => { const current = fixture(); const view = render(<App createClient={current.factory} />); view.unmount(); await waitFor(() => expect(current.wire.end).toHaveBeenCalledOnce()); });
+  it('ends the old wire and creates a replacement when the client factory changes', async () => {
+    const first = fixture();
+    const second = fixture();
+    const view = render(<App createClient={first.factory} />);
+    await waitFor(() => expect(first.factory).toHaveBeenCalledOnce());
+    view.rerender(<App createClient={second.factory} />);
+    await waitFor(() => expect(second.factory).toHaveBeenCalledOnce());
+    expect(first.wire.end).toHaveBeenCalledOnce();
+    view.unmount();
+    await waitFor(() => expect(second.wire.end).toHaveBeenCalledOnce());
+  });
 });

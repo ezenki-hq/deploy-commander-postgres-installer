@@ -30,16 +30,19 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
   const clientRef = useRef<AppClient | null>(null);
+  const clientFactoryRef = useRef<AppClientFactory | null>(null);
   const [client, setClient] = useState<AppClient | null>(null);
   const clientGeneration = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const generation = ++clientGeneration.current;
-    if (clientRef.current === null) {
+    if (clientRef.current === null || clientFactoryRef.current !== createClient) {
+      clientRef.current?.wire.end();
       clientRef.current = createClient((event) => {
         if (event.eventType === 'run-start' || event.eventType === 'run-update') setRefresh((value) => value + 1);
       });
+      clientFactoryRef.current = createClient;
     }
     const stableClient = clientRef.current;
     const cleanupGeneration = generation;
