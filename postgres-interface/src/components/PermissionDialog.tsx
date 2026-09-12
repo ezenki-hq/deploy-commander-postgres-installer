@@ -5,6 +5,7 @@ import useDialogFocus from './useDialogFocus';
 export interface PermissionDialogProps {
   callerId: string;
   busy: boolean;
+  installsPostgres?: boolean;
   onAllow: (remember: boolean) => void;
   onCancel: () => void;
 }
@@ -12,6 +13,7 @@ export interface PermissionDialogProps {
 export function PermissionDialog({
   callerId,
   busy,
+  installsPostgres = false,
   onAllow,
   onCancel,
 }: PermissionDialogProps) {
@@ -42,7 +44,9 @@ export function PermissionDialog({
           >
             {callerId}
           </span>
-          requests a logical database and credentials from this PostgreSQL installation.
+          {installsPostgres
+            ? 'This request will install PostgreSQL, then create a logical database and credentials.'
+            : 'requests a logical database and credentials from this PostgreSQL installation.'}
         </p>
         <label className="mt-5 flex items-start gap-2 text-sm leading-6 text-slate-700">
           <input

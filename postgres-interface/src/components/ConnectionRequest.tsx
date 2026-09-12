@@ -3,22 +3,22 @@ import type { RPC, RPCCaller, Wire } from '@ezenki/deploy-commander-installer-in
 import PermissionDialog from './PermissionDialog';
 import ManagerShell from './ManagerShell';
 import StatusPanel from './StatusPanel';
-import { generateConnectionCredentials } from '../lib/credentials';
-import { parsePlatformConnection } from '../lib/postgresContracts';
+import { generateAdminCredentials, generateConnectionCredentials } from '../lib/credentials';
 import { createPostgresConnection, type PermissionDecision } from '../lib/createPostgresConnection';
-import type { ReadyPrimaryState } from '../lib/primaryState';
 import type { RunEventSource } from '../lib/runMonitor';
 import { waitForRun } from '../lib/runMonitor';
 import { OperationBusyError, PostgresRecoveryRequiredError } from '../lib/postgresErrors';
 
 export interface ConnectionRequestProps {
-  caller?: RPCCaller;
-  events?: RunEventSource;
-  wire?: Wire;
+  caller: RPCCaller;
+  events: RunEventSource;
+  wire: Wire;
   currentManagerId: string;
   callingManagerId: string | null;
-  resource: RPC.ResourceItem | null;
-  primary: ReadyPrimaryState | null;
+  /** @deprecated ignored; retained for host compatibility during cutover. */
+  resource?: RPC.ResourceItem | null;
+  /** @deprecated ignored; retained for host compatibility during cutover. */
+  primary?: unknown;
   initialError?: string | null;
   initialResult?: RPC.CreateConnection | null;
   storage?: Storage;
@@ -51,8 +51,6 @@ export default function ConnectionRequest({
   wire,
   currentManagerId,
   callingManagerId,
-  resource,
-  primary,
   initialError = null,
   initialResult = null,
   storage,
@@ -60,6 +58,7 @@ export default function ConnectionRequest({
   const closedRef = useRef(false);
   const pendingRef = useRef<((decision: PermissionDecision) => void) | null>(null);
   const [prompt, setPrompt] = useState(false);
+  const [installsPostgres, setInstallsPostgres] = useState(false);
   const [busy, setBusy] = useState(Boolean(initialResult));
 
   const closeOnce = useCallback((response: { ok: boolean; result?: RPC.CreateConnection; status?: number; message?: string }) => {
@@ -79,33 +78,18 @@ export default function ConnectionRequest({
       closeOnce({ ok: false, ...mapped });
       return undefined;
     }
-    if (!caller || !events || !wire || !callingManagerId || !resource || !primary) {
+    if (!caller || !events || !wire || !callingManagerId) {
       closeOnce({ ok: false, status: callingManagerId ? 503 : 400, message: callingManagerId ? 'PostgreSQL recovery is required' : 'A calling manager is required' });
       return undefined;
     }
     let active = true;
     const controller = new AbortController();
-    const requestPermission = () => new Promise<PermissionDecision>((resolve) => {
+    const requestPermission = (context: { installsPostgres: boolean }) => new Promise<PermissionDecision>((resolve) => {
+      setInstallsPostgres(context.installsPostgres);
       pendingRef.current = resolve;
       if (active) setPrompt(true);
     });
     const run = async () => {
-      let details: unknown;
-      try {
-        details = await caller.getResource(resource.id);
-      } catch {
-        throw new PostgresRecoveryRequiredError();
-      }
-      if (typeof details !== 'object' || details === null || typeof (details as { config?: unknown }).config !== 'object' || (details as { config?: unknown }).config === null) {
-        throw new PostgresRecoveryRequiredError();
-      }
-      const config = (details as { config: { platform_connection?: unknown } }).config;
-      let platform;
-      try {
-        platform = parsePlatformConnection(config.platform_connection);
-      } catch {
-        throw new PostgresRecoveryRequiredError();
-      }
       const selectedStorage = storage ?? (typeof window !== 'undefined' ? window.localStorage : undefined);
       if (!selectedStorage) throw new Error('Unable to create the PostgreSQL connection');
       return createPostgresConnection({
@@ -113,15 +97,13 @@ export default function ConnectionRequest({
       events,
       storage: selectedStorage,
       requestPermission,
+      generateAdminCredentials: () => generateAdminCredentials(),
       generateCredentials: () => generateConnectionCredentials(),
       waitForRun,
       signal: controller.signal,
     }, {
       currentManagerId,
       callingManagerId,
-      resource,
-      platform,
-      primary,
       });
     };
     void run().then((result) => {
@@ -138,7 +120,7 @@ export default function ConnectionRequest({
       pendingRef.current?.({ allowed: false, remember: false });
       pendingRef.current = null;
     };
-  }, [caller, events, wire, currentManagerId, callingManagerId, resource, primary, initialError, initialResult, storage, closeOnce]);
+  }, [caller, events, wire, currentManagerId, callingManagerId, initialError, initialResult, storage, closeOnce]);
 
   const progress = <ManagerShell badge={{ label: 'Connecting', tone: 'progress' }}>
     <StatusPanel
@@ -157,6 +139,7 @@ export default function ConnectionRequest({
       <PermissionDialog
         callerId={callingManagerId ?? ''}
         busy={busy}
+        installsPostgres={installsPostgres}
         onAllow={(remember) => {
           pendingRef.current?.({ allowed: true, remember });
           pendingRef.current = null;

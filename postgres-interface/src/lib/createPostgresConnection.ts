@@ -115,15 +115,25 @@ export async function reconcileLatestConnectionRun(deps: ConnectionWorkflowDeps,
 export async function createPostgresConnection(deps: ConnectionWorkflowDeps, request: ConnectionRequest): Promise<RPC.CreateConnection> {
   aborted(deps.signal); if (!nonBlank(request.currentManagerId) || !nonBlank(request.callingManagerId)) throw new Error('A calling manager is required');
   let installation = await resources(deps.caller);
+  let latest: RPC.RunItem | null = null;
+  // An absent resource is installable only after a confirmed teardown (or
+  // when no lifecycle run exists). Any other latest run means the durable
+  // state contradicts discovery and must be recovered by the manager.
+  if (!installation) {
+    latest = await readLatestRun(deps.caller);
+    if (latest && (latest.action !== 'teardown' || latest.status !== 2)) throw recovery();
+  }
   if (installation) {
     const found = await existing(deps, installation, request.callingManagerId); if (found) return found;
-    const recovered = await reconcileLatestConnectionRun(deps, await readLatestRun(deps.caller), request.callingManagerId); if (recovered?.kind === 'connection') return recovered.value;
+    latest = await readLatestRun(deps.caller);
+    const recovered = await reconcileLatestConnectionRun(deps, latest, request.callingManagerId); if (recovered?.kind === 'connection') return recovered.value;
   }
   aborted(deps.signal);
   const permissionResourceId = installation?.resource.id ?? 'not-installed';
   let allowed = isPermissionRemembered(deps.storage, request.currentManagerId, permissionResourceId);
-  if (!allowed) { const decision = await deps.requestPermission({ installsPostgres: installation === null }); if (!decision || typeof decision.allowed !== 'boolean' || typeof decision.remember !== 'boolean') throw new Error('Invalid permission decision'); if (!decision.allowed) throw new Error('Database access was cancelled'); allowed = true; if (decision.remember && installation) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
-  if (!installation) { installation = await install(deps); }
+  let remember = false;
+  if (!allowed) { const decision = await deps.requestPermission({ installsPostgres: installation === null }); if (!decision || typeof decision.allowed !== 'boolean' || typeof decision.remember !== 'boolean') throw new Error('Invalid permission decision'); if (!decision.allowed) throw new Error('Database access was cancelled'); allowed = true; remember = decision.remember; if (decision.remember && installation) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
+  if (!installation) { installation = await install(deps); if (remember) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
   // Always use the post-install resource configuration, including its current
   // administrator and platform connection, for all subsequent RPCs.
   installation = await resources(deps.caller) ?? (() => { throw recovery(); })();
