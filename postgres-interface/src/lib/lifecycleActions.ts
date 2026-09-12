@@ -34,6 +34,17 @@ function returnedId(value: unknown): string | null {
 }
 function statusOf(error: unknown): unknown { return typeof error === 'object' && error !== null ? (error as { status?: unknown }).status : undefined; }
 
+async function readActionState(deps: LifecycleActionDeps) {
+  try {
+    const result = await Promise.all([readPostgresLifecycle(deps.caller), listPostgresResources(deps.caller)]);
+    aborted(deps.signal);
+    return result;
+  } catch (error) {
+    if (deps.signal.aborted) aborted(deps.signal);
+    throw error;
+  }
+}
+
 async function startAndWait(
   deps: LifecycleActionDeps,
   action: 'create' | 'teardown',
@@ -64,7 +75,7 @@ async function startAndWait(
 
 export async function installPostgres(deps: LifecycleActionDeps): Promise<void> {
   aborted(deps.signal);
-  const [{ lifecycle }, resources] = await Promise.all([readPostgresLifecycle(deps.caller), listPostgresResources(deps.caller)]);
+  const [{ lifecycle }, resources] = await readActionState(deps);
   if (lifecycle.kind === 'installing' || lifecycle.kind === 'tearing-down' || (lifecycle.kind === 'installed' && lifecycle.operationBusy)) throw new OperationBusyError();
   if (resources.length !== 0 || lifecycle.kind === 'installed' || lifecycle.kind === 'teardown-failed') throw recovery();
   const credentials = (deps.generateCredentials ?? generateAdminCredentials)();
@@ -74,7 +85,7 @@ export async function installPostgres(deps: LifecycleActionDeps): Promise<void> 
 
 export async function teardownPostgres(deps: LifecycleActionDeps): Promise<void> {
   aborted(deps.signal);
-  const [{ lifecycle }, resources] = await Promise.all([readPostgresLifecycle(deps.caller), listPostgresResources(deps.caller)]);
+  const [{ lifecycle }, resources] = await readActionState(deps);
   if (lifecycle.kind === 'installing' || lifecycle.kind === 'tearing-down' || (lifecycle.kind === 'installed' && lifecycle.operationBusy)) throw new OperationBusyError();
   if (resources.length === 0 || (lifecycle.kind === 'not-installed' && resources.length === 0)) throw recovery();
   await startAndWait(deps, 'teardown', TEARDOWN_PLAN, 'PostgreSQL teardown failed');
