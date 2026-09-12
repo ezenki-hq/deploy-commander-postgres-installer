@@ -1,13 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { resolvePostgresLifecycle } from './postgresRuns';
-
-describe('postgres run lifecycle', () => {
-  it('resolves a completed create run as installed and idle', () => {
-    expect(resolvePostgresLifecycle({
-      id: 'create-2', action: 'create', status: 2,
-      note: 'note', queued_at: '2026-09-11T00:00:00.000Z',
-      created_at: '2026-09-11T00:00:00.000Z', updated_at: '2026-09-11T00:00:00.000Z',
-      started_at: '2026-09-11T00:00:01.000Z', finished_at: '2026-09-11T00:00:02.000Z',
-    })).toEqual({ kind: 'installed', runId: 'create-2', operationBusy: false });
-  });
+import { describe, expect, it, vi } from 'vitest';
+import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
+import { findCorrelatedRun, readExactRun, readLatestRun, resolvePostgresLifecycle } from './postgresRuns';
+const run=(action:string,status:number,id=`${action}-${status}`):RPC.RunItem=>({id,action,status,note:`note-${status}`,queued_at:'2026-09-11T00:00:00.000Z',created_at:'2026-09-11T00:00:00.000Z',updated_at:'2026-09-11T00:00:00.000Z'});
+const c=(x:Partial<RPCCaller>)=>x as RPCCaller;
+describe('postgres runs',()=>{
+ it.each([[null,'not-installed'],['create','installing'],['teardown','tearing-down'],['create-connection','installed'],['cleanup-connection','installed']])('resolves %s', (a,k)=>expect(resolvePostgresLifecycle(a===null?null:run(a as string,a==='cleanup-connection'?2:0)).kind).toBe(k));
+ it.each(['create','teardown','create-connection','cleanup-connection'])('handles done/failed %s',a=>{expect(()=>resolvePostgresLifecycle(run(a,2))).not.toThrow();expect(()=>resolvePostgresLifecycle(run(a,3))).not.toThrow()});
+ it('rejects unknown values',()=>{expect(()=>resolvePostgresLifecycle(run('unknown',0))).toThrow();expect(()=>resolvePostgresLifecycle(run('create',9))).toThrow()});
+ it('reads latest strictly',async()=>{const getRuns=vi.fn().mockResolvedValue({items:[run('create',2)],limit:1,offset:0,total:1});await expect(readLatestRun(c({getRuns}))).resolves.toEqual(expect.objectContaining({id:'create-2'}));expect(getRuns).toHaveBeenCalledWith(undefined,undefined,undefined,'-created_at',1,0)});
+ it.each([{items:[],limit:1,offset:2,total:1},{items:[],limit:1,offset:0,total:2},{items:[run('create',0),run('create',1)],limit:1,offset:0,total:2}])('rejects malformed page',async p=>expect(readLatestRun(c({getRuns:vi.fn().mockResolvedValue(p)}))).rejects.toThrow());
+ it('validates exact run',async()=>{const v={run:run('create',2,'run-1'),config:{run:'run-1',action:'create'}};await expect(readExactRun(c({getRun:vi.fn().mockResolvedValue(v)}),'run-1')).resolves.toEqual(v);await expect(readExactRun(c({getRun:vi.fn().mockResolvedValue(v)}),'other')).rejects.toThrow()});
+ it('finds absent found and ambiguous across pages',async()=>{await expect(findCorrelatedRun(c({getRuns:vi.fn().mockResolvedValue({items:[],limit:50,offset:0,total:0})}),'create','x')).resolves.toEqual({kind:'absent'});await expect(findCorrelatedRun(c({getRuns:vi.fn().mockResolvedValue({items:[run('create',2,'r')],limit:50,offset:0,total:1})}),'create','note-2')).resolves.toEqual({kind:'found',id:'r'});const g=vi.fn().mockResolvedValueOnce({items:[run('create',2,'r'),...Array.from({length:49},(_,i)=>run('create',2,`x${i}`))],limit:50,offset:0,total:51}).mockResolvedValueOnce({items:[run('create',2,'r2')],limit:50,offset:50,total:51});await expect(findCorrelatedRun(c({getRuns:g}),'create','note-2')).resolves.toEqual({kind:'ambiguous'})});
 });
