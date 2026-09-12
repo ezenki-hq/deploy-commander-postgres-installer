@@ -15,7 +15,7 @@ const details = {
     metadata: {
       engine: 'postgres', version: '15',
       administrator: {
-        username: 'pg_admin_0123456789abcdef0123456789abcdef',
+        username: 'dc_admin_0123456789abcdef0123456789abcdef',
         password: 'admin-password',
       },
     },
@@ -62,6 +62,7 @@ describe('postgres resource contract', () => {
     ['owner', { resource: { ...resource, manager: 'other-manager' } }],
     ['identity', { config: { ...details.config, id: 'other' } }],
     ['administrator', { config: { ...details.config, metadata: { ...details.config.metadata, administrator: { username: 'bad', password: '' } } } }],
+    ['reserved administrator', { config: { ...details.config, metadata: { ...details.config.metadata, administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' } } } }],
     ['metadata', { config: { ...details.config, metadata: { engine: 'postgres', version: '15' } } }],
     ['platform', { config: { ...details.config, platform_connection: { type: 'Platform', data: { network: '' } } } }],
   ])('rejects malformed %s details', async (_label, change) => {

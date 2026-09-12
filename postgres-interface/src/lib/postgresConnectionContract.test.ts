@@ -23,7 +23,7 @@ const logicalMetadata = {
   host: 'postgres',
   port: 5432,
   database: 'db_0123456789abcdef0123456789abcdef',
-  username: 'pg_user_0123456789abcdef0123456789abcdef',
+  username: 'dc_user_0123456789abcdef0123456789abcdef',
   password: 'logical-password',
 };
 
@@ -77,6 +77,7 @@ describe('normalizePostgresConnection', () => {
     ['port', { ...logicalMetadata, port: 5433 }],
     ['database', { ...logicalMetadata, database: 'postgres' }],
     ['username', { ...logicalMetadata, username: 'postgres' }],
+    ['reserved username', { ...logicalMetadata, username: 'pg_user_0123456789abcdef0123456789abcdef' }],
     ['password', { ...logicalMetadata, password: '' }],
     ['platform', {
       ...logicalMetadata,

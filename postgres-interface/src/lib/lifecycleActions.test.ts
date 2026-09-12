@@ -17,7 +17,7 @@ function deps(overrides: Record<string, unknown> = {}): LifecycleActionDeps & { 
   };
   const caller = { ...mocks, ...overrides } as unknown as RPCCaller;
   const wait = (overrides.waitForRun as ReturnType<typeof vi.fn> | undefined) ?? mocks.waitForRun;
-  return { caller, events: createRunEventSource(), signal: new AbortController().signal, waitForRun: wait as never, generateCredentials: () => ({ username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'secret' }), mocks };
+  return { caller, events: createRunEventSource(), signal: new AbortController().signal, waitForRun: wait as never, generateCredentials: () => ({ username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'secret' }), mocks };
 }
 
 describe('database-free lifecycle actions', () => {

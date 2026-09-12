@@ -1,8 +1,13 @@
 import type { AdminCredentials } from './credentials';
 import type { RunnerMetadata } from './postgresContracts';
 
+const ADMIN_USERNAME_PATTERN = /^dc_admin_[0-9a-f]{32}$/;
+
 /** Build the one persistent service used by the PostgreSQL installation. */
 export function buildInstallPlan(credentials: AdminCredentials): RunnerMetadata {
+  if (!ADMIN_USERNAME_PATTERN.test(credentials.username)) {
+    throw new Error('Invalid administrator username');
+  }
   return {
     services: {
       postgres: {

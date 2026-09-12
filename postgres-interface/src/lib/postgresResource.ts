@@ -16,7 +16,7 @@ export interface PostgresInstallation {
 }
 
 const LIMIT = 50;
-const ADMIN_USERNAME = /^pg_admin_[0-9a-f]{32}$/;
+const ADMIN_USERNAME = /^dc_admin_[0-9a-f]{32}$/;
 type RecordValue = Record<string, unknown>;
 
 function isRecord(value: unknown): value is RecordValue {

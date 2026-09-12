@@ -23,7 +23,7 @@ describe('generateAdminCredentials', () => {
     const { random } = sequenceRandomBytes();
     const admin = generateAdminCredentials(random);
 
-    expect(admin.username).toMatch(/^pg_admin_[0-9a-f]{32}$/);
+    expect(admin.username).toMatch(/^dc_admin_[0-9a-f]{32}$/);
     expect(admin.password).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 });
@@ -34,7 +34,7 @@ describe('generateConnectionCredentials', () => {
     const logical = generateConnectionCredentials(random);
 
     expect(logical.database).toMatch(/^db_[0-9a-f]{32}$/);
-    expect(logical.username).toMatch(/^pg_user_[0-9a-f]{32}$/);
+    expect(logical.username).toMatch(/^dc_user_[0-9a-f]{32}$/);
     expect(logical.password).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 

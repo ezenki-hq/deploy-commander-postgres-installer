@@ -77,19 +77,12 @@ then
   exit 1
 fi`;
 
-const IDENTIFIER_PATTERN = /^[a-z_][a-z0-9_]{0,62}$/;
+const ADMIN_USERNAME_PATTERN = /^dc_admin_[0-9a-f]{32}$/;
 const DATABASE_PATTERN = /^db_[0-9a-f]{32}$/;
-const USERNAME_PATTERN = /^pg_user_[0-9a-f]{32}$/;
+const USERNAME_PATTERN = /^dc_user_[0-9a-f]{32}$/;
 
 function assertNonBlank(value: unknown, label: string): asserts value is string {
   if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`Invalid ${label}`);
-  }
-}
-
-function assertIdentifier(value: unknown, label: string): asserts value is string {
-  assertNonBlank(value, label);
-  if (!IDENTIFIER_PATTERN.test(value) || value.length > 63) {
     throw new Error(`Invalid ${label}`);
   }
 }
@@ -110,7 +103,9 @@ function assertGeneratedUsername(value: unknown): asserts value is string {
 
 function validateAdministrator(administrator: AdminCredentials): void {
   if (typeof administrator !== 'object' || administrator === null) throw new Error('Invalid administrator credentials');
-  assertIdentifier(administrator.username, 'administrator username');
+  if (typeof administrator.username !== 'string' || !ADMIN_USERNAME_PATTERN.test(administrator.username)) {
+    throw new Error('Invalid administrator username');
+  }
   assertNonBlank(administrator.password, 'administrator password');
 }
 

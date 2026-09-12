@@ -18,7 +18,7 @@ function fixture(overrides: Partial<RPCCaller> = {}, metadata: unknown = {}) {
 }
 describe('run-backed App boot', () => {
   it('reads the latest run and never initializes private database state', async () => {
-    const current = fixture({ getRuns: vi.fn().mockResolvedValue({ items: [run(2)], limit: 1, offset: 0, total: 1 }), getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }), getResource: vi.fn().mockResolvedValue({ resource, config: { id: resource.id, manager: resource.manager, agent: 'agent', resource_type: 'postgres', name: 'postgres', metadata: { engine: 'postgres', version: '15', administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'secret' } }, platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } }) });
+    const current = fixture({ getRuns: vi.fn().mockResolvedValue({ items: [run(2)], limit: 1, offset: 0, total: 1 }), getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }), getResource: vi.fn().mockResolvedValue({ resource, config: { id: resource.id, manager: resource.manager, agent: 'agent', resource_type: 'postgres', name: 'postgres', metadata: { engine: 'postgres', version: '15', administrator: { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'secret' } }, platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } }) });
     render(<App createClient={current.factory} />);
     await screen.findByRole('heading', { name: 'PostgreSQL is installed' });
     expect(current.caller.getRuns).toHaveBeenCalledWith(undefined, undefined, undefined, '-created_at', 1, 0);

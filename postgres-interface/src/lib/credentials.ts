@@ -32,7 +32,7 @@ function toBase64Url(bytes: Uint8Array): string {
 
 export function generateAdminCredentials(random: RandomBytes = browserRandomBytes): AdminCredentials {
   return {
-    username: `pg_admin_${toHex(getBytes(random, 16))}`,
+    username: `dc_admin_${toHex(getBytes(random, 16))}`,
     password: toBase64Url(getBytes(random, 32)),
   };
 }
@@ -40,7 +40,7 @@ export function generateAdminCredentials(random: RandomBytes = browserRandomByte
 export function generateConnectionCredentials(random: RandomBytes = browserRandomBytes): LogicalCredentials {
   return {
     database: `db_${toHex(getBytes(random, 16))}`,
-    username: `pg_user_${toHex(getBytes(random, 16))}`,
+    username: `dc_user_${toHex(getBytes(random, 16))}`,
     password: toBase64Url(getBytes(random, 32)),
   };
 }

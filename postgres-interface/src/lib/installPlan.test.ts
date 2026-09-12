@@ -5,7 +5,7 @@ import { buildInstallPlan } from './installPlan';
 describe('buildInstallPlan', () => {
   it('stores administrator credentials in resource metadata for recovery', () => {
     const credentials: AdminCredentials = {
-      username: 'pg_admin_example',
+      username: 'dc_admin_0123456789abcdef0123456789abcdef',
       password: 'secret-password',
     };
 
@@ -37,5 +37,12 @@ describe('buildInstallPlan', () => {
     const resourceMetadata = plan.services?.postgres?.resources?.[0]?.metadata;
     expect(resourceMetadata).toEqual({ engine: 'postgres', version: '15', administrator: credentials });
     expect(JSON.stringify(resourceMetadata)).not.toContain('logical-password');
+  });
+
+  it('rejects an administrator username in the reserved PostgreSQL namespace', () => {
+    expect(() => buildInstallPlan({
+      username: 'pg_admin_0123456789abcdef0123456789abcdef',
+      password: 'secret-password',
+    })).toThrow('Invalid administrator username');
   });
 });

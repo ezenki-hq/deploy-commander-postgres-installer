@@ -101,9 +101,10 @@ interface PostgresResourceMetadata {
 ```
 
 The implementation must validate the complete metadata required for an
-operation. Administrator username and password must be nonblank, the username
-must satisfy PostgreSQL identifier constraints, and malformed or missing
-metadata must fail closed.
+operation. Administrator usernames use `dc_admin_` followed by exactly 32
+lowercase hexadecimal characters, passwords must be nonblank, and malformed or
+missing metadata must fail closed. Names using PostgreSQL's reserved `pg_`
+namespace are invalid; there is no compatibility path for them.
 
 `getResource(id)` is owner-scoped and returns the full resource configuration.
 The PostgreSQL manager may read administrator credentials from it. Credentials
@@ -199,7 +200,9 @@ strictly validated before recovery uses their service environment.
 The provisioning run configuration durably contains the generated logical
 database, username, and password because those values are already required by
 the runner. This allows a later invocation to finish connection persistence
-after a reload without a separate journal.
+after a reload without a separate journal. Logical role names use `dc_user_`
+followed by exactly 32 lowercase hexadecimal characters; legacy `pg_user_`
+names are rejected.
 
 Before starting new provisioning, a child invocation reconciles the latest
 connection operation:

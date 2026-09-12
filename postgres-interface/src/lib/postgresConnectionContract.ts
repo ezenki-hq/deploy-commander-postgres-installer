@@ -13,7 +13,7 @@ export interface ExpectedConnectionIdentity {
 
 const PAGE_LIMIT = 50;
 const DATABASE_PATTERN = /^db_[0-9a-f]{32}$/;
-const USERNAME_PATTERN = /^pg_user_[0-9a-f]{32}$/;
+const USERNAME_PATTERN = /^dc_user_[0-9a-f]{32}$/;
 
 type UnknownRecord = Record<string, unknown>;
 

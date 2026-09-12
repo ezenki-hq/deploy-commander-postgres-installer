@@ -10,8 +10,8 @@ export type ConnectionNote = ({ kind: 'provision' } | { kind: 'cleanup' }) & Con
 
 const OPERATION_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 const DATABASE = /^db_[0-9a-f]{32}$/;
-const USERNAME = /^pg_user_[0-9a-f]{32}$/;
-const ADMIN_USERNAME = /^pg_admin_[0-9a-f]{32}$/;
+const USERNAME = /^dc_user_[0-9a-f]{32}$/;
+const ADMIN_USERNAME = /^dc_admin_[0-9a-f]{32}$/;
 type UnknownRecord = Record<string, unknown>;
 const isRecord = (v: unknown): v is UnknownRecord => typeof v === 'object' && v !== null && !Array.isArray(v);
 const recovery = (): PostgresRecoveryRequiredError => new PostgresRecoveryRequiredError();

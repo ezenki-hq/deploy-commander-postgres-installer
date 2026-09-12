@@ -9,10 +9,10 @@ import {
   PROVISION_SCRIPT,
 } from './postgresPlans';
 
-const administrator = { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-secret' };
+const administrator = { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'admin-secret' };
 const logical: LogicalCredentials = {
   database: 'db_0123456789abcdef0123456789abcdef',
-  username: 'pg_user_0123456789abcdef0123456789abcdef',
+  username: 'dc_user_0123456789abcdef0123456789abcdef',
   password: 'logical-secret',
 };
 const platform: PlatformConnection = {
@@ -149,9 +149,17 @@ fi`);
     })).toThrow('Invalid platform connection');
   });
 
+  it('rejects an administrator username in the reserved PostgreSQL namespace', () => {
+    expect(() => buildProvisionPlan({
+      ...administrator,
+      username: 'pg_admin_0123456789abcdef0123456789abcdef',
+    }, logical, platform)).toThrow('Invalid administrator username');
+  });
+
   it.each([
     { ...logical, database: 'db;drop database postgres' },
     { ...logical, username: 'pg_user;drop role postgres' },
+    { ...logical, username: 'pg_user_0123456789abcdef0123456789abcdef' },
     { ...logical, password: '' },
     ])('rejects unsafe logical credentials %j', (unsafe) => {
     expect(() => buildProvisionPlan(administrator, unsafe, platform)).toThrow();

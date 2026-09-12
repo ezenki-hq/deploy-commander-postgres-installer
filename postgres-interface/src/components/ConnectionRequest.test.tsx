@@ -115,7 +115,7 @@ describe('ConnectionRequest lifecycle', () => {
       config: {
         metadata: {
           engine: 'postgres', version: '15',
-          administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
+          administrator: { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
         },
         platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
       },
@@ -153,7 +153,7 @@ describe('ConnectionRequest lifecycle', () => {
       config: {
         metadata: {
           engine: 'postgres', version: '15',
-          administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
+          administrator: { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
         },
         platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
       },
