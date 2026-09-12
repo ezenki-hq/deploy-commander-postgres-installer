@@ -25,7 +25,7 @@ function validRun(v: unknown): v is RPC.RunItem {
 }
 function page(v: unknown, offset: number, limit: number): RPC.RunItem[] {
   if (!record(v) || v.limit !== limit || v.offset !== offset || !Number.isSafeInteger(v.total) || (v.total as number) < 0 || !Array.isArray(v.items) || v.items.length > limit || v.items.length > (v.total as number) || !v.items.every(validRun)) throw fail();
-  if (offset > (v.total as number) || v.items.length === 0 && (v.total as number) > offset) throw fail();
+  if (offset > (v.total as number) || offset + v.items.length > (v.total as number) || v.items.length === 0 && (v.total as number) > offset) throw fail();
   if (v.items.length < limit && offset + v.items.length < (v.total as number)) throw fail();
   return v.items;
 }
