@@ -2,26 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { RPCCaller, RPC, Wire } from '@ezenki/deploy-commander-installer-interface';
 import ConnectionRequest from './ConnectionRequest';
-import type { ReadyPrimaryState } from '../lib/primaryState';
 import { createRunEventSource } from '../lib/runMonitor';
 
 afterEach(cleanup);
 
 const resource = {
   id: 'resource-1', type: 'postgres', name: 'postgres', external: false,
-  created_at: 'now', updated_at: 'now',
+  manager: 'postgres-manager', agent: 'agent', created_at: 'now', updated_at: 'now',
 } as RPC.ResourceItem;
-
-const primary: ReadyPrimaryState = {
-  phase: 'ready', operationId: 'primary-1',
-  credentials: {
-    username: 'pg_admin_0123456789abcdef0123456789abcdef',
-    password: 'admin-password',
-  },
-  runId: 'run-1', resourceId: resource.id,
-  initializedAt: '2026-09-05T00:00:00.000Z',
-  updatedAt: '2026-09-05T00:00:00.000Z',
-};
 
 function baseProps(caller: RPCCaller, wire: Wire) {
   return {
@@ -31,7 +19,6 @@ function baseProps(caller: RPCCaller, wire: Wire) {
     currentManagerId: 'postgres-manager',
     callingManagerId: 'consumer-manager',
     resource,
-    primary,
     storage: {
       getItem: vi.fn().mockReturnValue(null),
       setItem: vi.fn(),
@@ -110,7 +97,10 @@ describe('ConnectionRequest lifecycle', () => {
     let resolveResource: (value: unknown) => void = () => undefined;
     const resourceRequest = new Promise((resolve) => { resolveResource = resolve; });
     const wire = { close: vi.fn() } as unknown as Wire;
-    const caller = { getResource: vi.fn().mockReturnValue(resourceRequest) } as unknown as RPCCaller;
+    const caller = {
+      getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+      getResource: vi.fn().mockReturnValue(resourceRequest),
+    } as unknown as RPCCaller;
     const props = baseProps(caller, wire);
     const view = render(<ConnectionRequest {...props} />);
 
@@ -120,7 +110,16 @@ describe('ConnectionRequest lifecycle', () => {
 
     expect(caller.getResource).toHaveBeenCalledTimes(1);
     view.unmount();
-    resolveResource({ config: { platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } });
+    resolveResource({
+      resource,
+      config: {
+        metadata: {
+          engine: 'postgres', version: '15',
+          administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
+        },
+        platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
+      },
+    });
   });
 
   it('closes an initial success exactly once across a rerender', async () => {
@@ -142,11 +141,23 @@ describe('ConnectionRequest lifecycle', () => {
     let resolveResource: (value: unknown) => void = () => undefined;
     const resourceRequest = new Promise((resolve) => { resolveResource = resolve; });
     const wire = { close: vi.fn() } as unknown as Wire;
-    const caller = { getResource: vi.fn().mockReturnValue(resourceRequest) } as unknown as RPCCaller;
+    const caller = {
+      getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+      getResource: vi.fn().mockReturnValue(resourceRequest),
+    } as unknown as RPCCaller;
     const view = render(<ConnectionRequest {...baseProps(caller, wire)} />);
 
     view.unmount();
-    resolveResource({ config: { platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } });
+    resolveResource({
+      resource,
+      config: {
+        metadata: {
+          engine: 'postgres', version: '15',
+          administrator: { username: 'pg_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' },
+        },
+        platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
+      },
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(wire.close).not.toHaveBeenCalled();

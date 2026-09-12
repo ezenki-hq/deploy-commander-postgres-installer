@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import type { RPCCaller, RPC, Wire, Events } from '@ezenki/deploy-commander-installer-interface';
 import App from './App';
 import { createRunEventSource } from './lib/runMonitor';
-import type { AppClient } from './lib/appRecovery';
+import type { AppClient } from './lib/interfaceClient';
 
 afterEach(cleanup);
 const resource = { id: 'resource-1', type: 'postgres', name: 'postgres', external: false, manager: 'manager', created_at: 'now', updated_at: 'now' } as RPC.ResourceItem;

@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Current lifecycle contract
+
+Use validated lifecycle runs and PostgreSQL resource records as the durable
+state. Do not reintroduce manager-database queries, `PrimaryState`, journals, or
+boot recovery modules. Connection recovery must use versioned run
+notes/configuration and Deploy Commander connection records; a credential-less
+existing resource must be torn down and reinstalled.
+
 ## Scope
 
 This file applies to all code under:

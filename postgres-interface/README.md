@@ -25,7 +25,7 @@ Its platform connection is read from the resource and must have the exact shape 
 
 ## State and credentials
 
-The primary PostgreSQL administrator credentials are private manager-owned state in the isolated SurrealDB manager database, in one record named `postgres_state:primary`. That record also stores the installation phase, operation ID, run ID, resource ID, and timestamps. Administrator credentials are never put in resource metadata, connection metadata, local storage, run notes, journals, UI, or error messages.
+The latest relevant lifecycle action and status are the installation truth. Administrator credentials live in owner-scoped PostgreSQL resource metadata and are never exposed in the UI, local storage, or errors. Credential-less existing resources cannot be safely adopted; teardown and reinstall are required.
 
 The runner may receive administrator and per-connection credentials through the access-controlled manager-scoped run configuration needed to execute its environment. Runner output is quiet and credentials are not logged.
 
@@ -33,9 +33,9 @@ Each logical connection gets a generated database, role, username, and password.
 
 ## Operations and recovery
 
-Installation and teardown are resource-based and use exact run IDs. Runner status values are queued `0`, running `1`, done `2`, and failed `3`; `getRun(id)` is the authoritative fallback when an event is missed. Provisioning waits for PostgreSQL readiness, uses identifier/value-safe SQL, and is idempotent.
+Installation and teardown are resource-based and use exact run IDs. Runner status values are queued `0`, running `1`, done `2`, and failed `3`; `getRun(id)` is the authoritative fallback when an event is missed. Provisioning waits for PostgreSQL readiness, uses identifier/value-safe SQL, and is idempotent. Connection recovery uses versioned run notes/configuration and Deploy Commander connection records.
 
-Before a connection request or teardown begins, the manager reconciles the single `postgres_operation:current` journal. The journal stores operation identifiers and generated database identifiers only, never passwords. Duplicate connections are checked before permission prompting or provisioning. A failed or ambiguous provisioning operation is recovered with a compensating cleanup run. A Deploy Commander connection is created only after provisioning succeeds; if connection creation fails, cleanup is retried and the journal remains recoverable.
+Connection requests can request approval, automatically install PostgreSQL when needed, then provision an isolated database. Duplicate connections are checked before permission prompting or provisioning. A failed or ambiguous provisioning operation is recovered with a compensating cleanup run. A Deploy Commander connection is created only after provisioning succeeds.
 
 Remembered connection approval is installation-scoped and stored in browser local storage under a key containing the current manager and PostgreSQL resource IDs. Resetting approval removes only that exact key. A storage failure never grants permission implicitly.
 
@@ -53,7 +53,7 @@ npm run build
 
 The UI is designed for the embedded manager frame and uses Tailwind CSS 4 through the Vite plugin. `npm test` uses Vitest with a jsdom environment.
 
-## Opt-in integration checks
+## Opt-in PostgreSQL integration check
 
 The PostgreSQL integration test is skipped by default. To run it, start a disposable `postgres:15` container and provide its name:
 
@@ -69,12 +69,3 @@ docker rm -f "$integration_container"
 ```
 
 The test uses `docker exec -i` and passes the scripts through the container command boundary; it does not require a host `psql` binary. It verifies idempotent role/database creation, ownership and scoped privileges, cleanup, and output redaction.
-
-The manager-database integration test is also skipped by default. Set `MANAGER_DATABASE_HARNESS_MODULE` to a local module exporting a real manager-scoped `RPCCaller` (as `caller` or the default export), then run:
-
-```sh
-MANAGER_DATABASE_HARNESS_MODULE=/absolute/path/to/harness.mjs \
-  npm test -- src/lib/managerDatabaseIntegration.test.ts
-```
-
-That check exercises the real atomic create/read/compare-and-set/delete state contract and cleans its fixed records in `finally`.

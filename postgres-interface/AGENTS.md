@@ -1,5 +1,14 @@
 # AGENTS.md
 
+## Current lifecycle contract
+
+Lifecycle truth is derived from the latest validated Deploy Commander run and
+resource records. Do not add a manager database, `PrimaryState`, operation
+journal, or browser-persisted lifecycle state. Administrator credentials belong
+in owner-scoped resource metadata; connection recovery belongs in versioned run
+notes/configuration and Deploy Commander connection records. Existing resources
+without credentials require teardown and reinstall.
+
 ## Scope
 
 This file applies to the entire:

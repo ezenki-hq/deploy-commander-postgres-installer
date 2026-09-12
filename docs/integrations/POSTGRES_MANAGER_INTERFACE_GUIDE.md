@@ -8,8 +8,7 @@ The PostgreSQL manager owns one PostgreSQL service and resource. Each consuming 
 
 Before requesting a connection:
 
-- The PostgreSQL manager must be installed in Deploy Commander.
-- Its PostgreSQL resource must be installed and ready.
+- The PostgreSQL manager must be available in Deploy Commander. A connection request may automatically install PostgreSQL after user approval.
 - The consuming manager must know the PostgreSQL manager's Deploy Commander manager ID.
 - The consumer must use `@ezenki/deploy-commander-installer-interface` and an active `Wire` created for its own manager interface.
 
@@ -66,7 +65,7 @@ Keep the child interface open until its `close` promise settles. The PostgreSQL 
 
 ## User approval
 
-Before provisioning a new database, the PostgreSQL manager asks the user to approve access for the trusted calling manager. The user may approve once, remember approval for the current PostgreSQL installation, or cancel.
+Before provisioning a new database, the PostgreSQL manager asks the user to approve access for the trusted calling manager. The user may approve once, remember approval for the current PostgreSQL installation, or cancel. If no installation exists, approval authorizes installation followed by provisioning.
 
 Remembered approval is scoped to both of these values:
 
@@ -187,7 +186,7 @@ On failure, the child closes with `ok: false`. Handle the status as follows:
 | `400` | `A calling manager is required` | The interface was not opened through a valid manager relationship. | Fix the parent/child invocation. Retrying unchanged will not help. |
 | `409` | `A PostgreSQL operation is already in progress` | Installation, teardown, recovery, or another connection operation owns the manager-wide operation lock. | Wait and retry later. Do not open concurrent retry children. |
 | `499` | `Database access was cancelled` | The user denied or cancelled approval. | Stop. Retry only after an explicit new user action. |
-| `503` | `PostgreSQL recovery is required` | The installation or a previous operation is not safely ready for provisioning. | Ask the PostgreSQL manager owner to open its dashboard and complete recovery. |
+| `503` | `PostgreSQL recovery is required` | The installation or a previous operation is not safely ready for provisioning. Credential-less existing resources require teardown and reinstall. | Ask the PostgreSQL manager owner to open its dashboard and complete recovery. |
 | `500` | `Unable to create the PostgreSQL connection` | Provisioning or connection persistence failed, or the failure was intentionally normalized. | Report a non-secret error and allow a deliberate retry. |
 
 Messages are deliberately normalized. Consumers must not depend on unlisted internal error details.
@@ -208,7 +207,7 @@ The manager checks for an existing connection before prompting or provisioning a
 
 ## Ownership and lifecycle
 
-- The PostgreSQL manager owns the PostgreSQL service, resource, volume, administrator credentials, provisioning runs, and recovery journal.
+- The PostgreSQL manager owns the PostgreSQL service, resource, volume, administrator credentials in owner-scoped resource metadata, provisioning runs, and recovery state encoded in versioned run notes/configuration and connection records.
 - The consuming manager owns the returned Deploy Commander connection and its logical database credentials.
 - The consumer must not use the administrator account or issue its own role/database provisioning SQL.
 - Tearing down the PostgreSQL installation is a PostgreSQL-manager administrative action and affects all logical connections. It is not exposed through the connection-request interface.

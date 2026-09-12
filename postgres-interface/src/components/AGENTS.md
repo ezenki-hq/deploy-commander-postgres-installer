@@ -1,5 +1,13 @@
 # AGENTS.md
 
+## Current lifecycle contract
+
+Components consume run-backed lifecycle state supplied by `App.tsx`. They must
+not add manager-database state, private journals, or `PrimaryState` recovery.
+Connection requests may obtain approval, install automatically, and provision;
+all durable recovery data belongs in validated run notes/configuration and
+Deploy Commander connection records.
+
 ## Scope
 
 This file applies to all code under:

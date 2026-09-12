@@ -6,14 +6,13 @@ import ActionButton from './components/ActionButton';
 import ConnectionRequest from './components/ConnectionRequest';
 import ManagerShell from './components/ManagerShell';
 import StatusPanel from './components/StatusPanel';
-import { createInterfaceClient } from './lib/interfaceClient';
+import { createInterfaceClient, type AppClient } from './lib/interfaceClient';
 import { createRunEventSource } from './lib/runMonitor';
 import { isCreateConnectionMetadata } from './lib/postgresContracts';
 import { listPostgresResources, readPostgresInstallation } from './lib/postgresResource';
 import { readPostgresLifecycle, type PostgresLifecycle } from './lib/postgresRuns';
 import { installPostgres, teardownPostgres } from './lib/lifecycleActions';
 import { clearPermission, isPermissionRemembered } from './lib/permissionPreference';
-import type { AppClient } from './lib/appRecovery';
 
 export type AppClientFactory = (onEvent: (event: Events.InterfaceEvent) => void) => AppClient;
 export interface AppProps { createClient?: AppClientFactory; }

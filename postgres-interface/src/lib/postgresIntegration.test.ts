@@ -4,17 +4,11 @@ import { spawn } from 'node:child_process';
 import { buildCleanupPlan, buildProvisionPlan } from './postgresPlans';
 import { generateConnectionCredentials } from './credentials';
 import type { PlatformConnection } from './postgresContracts';
-import type { PrimaryState } from './primaryState';
 
 const container = process.env.POSTGRES_INTEGRATION_CONTAINER;
 const password = process.env.POSTGRES_INTEGRATION_PASSWORD ?? 'integration_only_password';
 const platform: PlatformConnection = { type: 'Platform', data: { network: 'integration-network' } };
-const primary: PrimaryState = {
-  phase: 'ready', operationId: 'integration-primary',
-  credentials: { username: 'integration_admin', password },
-  runId: 'integration-run', resourceId: 'integration-resource',
-  initializedAt: '2026-08-30T00:00:00.000Z', updatedAt: '2026-08-30T00:00:00.000Z',
-};
+const administrator = { username: 'integration_admin', password };
 const logical = {
   ...generateConnectionCredentials((length) => new Uint8Array(length).fill(7)),
   password: 'integration_logical_password',
@@ -46,8 +40,8 @@ function serviceArgs(command: string[]): string[] {
     PGHOST: '127.0.0.1',
     PGPORT: '5432',
     PGDATABASE: 'postgres',
-    PGUSER: primary.credentials.username,
-    PGPASSWORD: primary.credentials.password,
+    PGUSER: administrator.username,
+    PGPASSWORD: administrator.password,
     TARGET_DATABASE: logical.database,
     TARGET_USERNAME: logical.username,
     TARGET_PASSWORD: logical.password,
@@ -60,15 +54,15 @@ function serviceArgs(command: string[]): string[] {
 
 async function query(sql: string): Promise<string> {
   const result = await runDocker([
-    'exec', '-i', '-e', `PGPASSWORD=${primary.credentials.password}`, container!,
-    'psql', '-X', '-At', '-U', primary.credentials.username, '-d', 'postgres', '-c', sql,
+    'exec', '-i', '-e', `PGPASSWORD=${administrator.password}`, container!,
+    'psql', '-X', '-At', '-U', administrator.username, '-d', 'postgres', '-c', sql,
   ]);
   return result.stdout.trim();
 }
 
 describe.skipIf(!container)('opt-in PostgreSQL provisioning integration', () => {
   it('provisions idempotently, scopes privileges, and cleans up', async () => {
-    const provision = buildProvisionPlan(primary.credentials, logical, platform);
+    const provision = buildProvisionPlan(administrator, logical, platform);
     const service = provision.services?.['postgres-admin'];
     if (!service) throw new Error('Provisioning service is missing');
     const command = service.command;
@@ -84,7 +78,7 @@ describe.skipIf(!container)('opt-in PostgreSQL provisioning integration', () => 
     expect(await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${logical.database}'`)).toBe(logical.username);
     expect(await query(`SELECT has_database_privilege('${logical.username}', '${logical.database}', 'CREATE')`)).toBe('t');
 
-    const cleanup = buildCleanupPlan(primary.credentials, logical.database, logical.username, platform);
+    const cleanup = buildCleanupPlan(administrator, logical.database, logical.username, platform);
     const cleanupService = cleanup.services?.['postgres-admin'];
     if (!cleanupService) throw new Error('Cleanup service is missing');
     const cleanupCommand = cleanupService.command;

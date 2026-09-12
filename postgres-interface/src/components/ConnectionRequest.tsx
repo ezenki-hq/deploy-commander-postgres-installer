@@ -16,7 +16,7 @@ export interface ConnectionRequestProps {
   currentManagerId: string;
   callingManagerId: string | null;
   /** @deprecated ignored; retained for host compatibility during cutover. */
-  resource?: RPC.ResourceItem | null;
+  resource?: unknown;
   /** @deprecated ignored; retained for host compatibility during cutover. */
   primary?: unknown;
   initialError?: string | null;

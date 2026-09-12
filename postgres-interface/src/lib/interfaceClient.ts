@@ -7,10 +7,15 @@ import {
   type Wire,
   type WireSend,
 } from '@ezenki/deploy-commander-installer-interface';
+import type { RunEventSource } from './runMonitor';
 
 export interface InterfaceClient {
   wire: Wire;
   caller: RPCCaller;
+}
+
+export interface AppClient extends InterfaceClient {
+  events: RunEventSource;
 }
 
 export function createInterfaceClient(
