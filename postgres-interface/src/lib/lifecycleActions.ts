@@ -60,6 +60,7 @@ async function startAndWait(
     }
     runId = returnedId(response) ?? '';
     if (!runId) {
+      aborted(deps.signal);
       const match = await findCorrelatedRun(deps.caller, action, note);
       if (match.kind !== 'found') throw recovery();
       runId = match.id;

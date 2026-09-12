@@ -102,4 +102,20 @@ describe('database-free lifecycle actions', () => {
     await expect(installPostgres(d)).rejects.toBeInstanceOf(PostgresRecoveryRequiredError);
     expect((d.caller.start as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
   });
+
+  it('preserves abort when rejected start is followed by failed correlation reads', async () => {
+    const controller = new AbortController();
+    const d = deps({
+      start: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        throw new Error('transport secret');
+      }),
+      getRuns: vi.fn().mockImplementation(async (_a: unknown, _b: unknown, _c: unknown, _sort: unknown, limit: number, offset: number) => {
+        if (limit === 1) return { items: [], limit, offset, total: 0 };
+        throw new Error('correlation transport secret');
+      }),
+    });
+    d.signal = controller.signal;
+    await expect(installPostgres(d)).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
