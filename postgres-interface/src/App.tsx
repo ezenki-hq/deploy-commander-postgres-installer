@@ -22,20 +22,43 @@ type View = { kind: 'dashboard'; manager: string; lifecycle: PostgresLifecycle; 
 function managerId(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value : null; }
 function safeError(error: unknown): string { return error instanceof Error && error.message === 'Unable to identify the PostgreSQL manager' ? error.message : 'Unable to load PostgreSQL manager state'; }
 function productionClient(onEvent: (event: Events.InterfaceEvent) => void): AppClient { const events = createRunEventSource(); const client = createInterfaceClient((event) => { events.publish(event); onEvent(event); }); return { ...client, events }; }
+const defaultClientFactory: AppClientFactory = productionClient;
 
-export default function App({ createClient = productionClient }: AppProps) {
+export default function App({ createClient = defaultClientFactory }: AppProps) {
   const [view, setView] = useState<View | null>(null);
   const [action, setAction] = useState<LifecycleAction>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [client] = useState<AppClient>(() => createClient((event) => {
-    if (event.eventType === 'run-start' || event.eventType === 'run-update') setRefresh((value) => value + 1);
-  }));
+  const clientRef = useRef<AppClient | null>(null);
+  const [client, setClient] = useState<AppClient | null>(null);
+  const clientGeneration = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
 
-  useEffect(() => () => { controllerRef.current?.abort(); client.wire.end(); }, [client]);
+  useEffect(() => {
+    const generation = ++clientGeneration.current;
+    if (clientRef.current === null) {
+      clientRef.current = createClient((event) => {
+        if (event.eventType === 'run-start' || event.eventType === 'run-update') setRefresh((value) => value + 1);
+      });
+    }
+    const stableClient = clientRef.current;
+    const cleanupGeneration = generation;
+    queueMicrotask(() => { if (clientGeneration.current === cleanupGeneration) setClient(stableClient); });
+    return () => {
+      queueMicrotask(() => {
+        // The generation ref intentionally survives StrictMode's effect replay.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        if (clientGeneration.current !== cleanupGeneration) return;
+        controllerRef.current?.abort();
+        stableClient.wire.end();
+        clientRef.current = null;
+        setClient(null);
+      });
+    };
+  }, [createClient]);
 
   useEffect(() => {
+    if (!client) return undefined;
     let live = true; const controller = new AbortController(); controllerRef.current = controller;
     const boot = async (): Promise<View> => {
       const manager = managerId(await client.caller.getManager());
@@ -49,7 +72,8 @@ export default function App({ createClient = productionClient }: AppProps) {
       const resource = resources.length === 1 ? resources[0] : null;
       let compatible = false;
       if (resource) { try { await readPostgresInstallation(client.caller, resource); compatible = true; } catch { compatible = false; } }
-      const contradiction = resources.length === 1 && (lifecycle.kind === 'not-installed' || lifecycle.kind === 'installing' || lifecycle.kind === 'tearing-down');
+      const contradiction = (lifecycle.kind === 'installed' && resources.length === 0)
+        || (resources.length === 1 && (lifecycle.kind === 'not-installed' || lifecycle.kind === 'installing' || lifecycle.kind === 'tearing-down'));
       return { kind: 'dashboard', manager, lifecycle, resource, compatible, ambiguous: resources.length > 1, contradiction, error: null };
     };
     void boot().then((next) => { if (live) setView(next); }).catch((error: unknown) => { if (live) setView({ kind: 'error', message: safeError(error) }); });
@@ -59,6 +83,7 @@ export default function App({ createClient = productionClient }: AppProps) {
   const retry = () => { setActionError(null); setView(null); setRefresh((value) => value + 1); };
   if (!view) return <ManagerShell badge={{ label: 'Loading', tone: 'progress' }}><StatusPanel tone="progress" eyebrow="Manager startup" title="Loading manager state" role="status">Checking PostgreSQL installation and recovery state.</StatusPanel></ManagerShell>;
   if (view.kind === 'error') return <ManagerShell badge={{ label: 'Unavailable', tone: 'danger' }}><StatusPanel tone="danger" eyebrow="Manager startup" title="Manager startup requires attention" role="alert" actions={<ActionButton tone="secondary" onClick={retry}>Retry</ActionButton>}>{view.message}</StatusPanel></ManagerShell>;
+  if (!client) return null;
   if (view.kind === 'connection') return <ConnectionRequest caller={client.caller} events={client.events} wire={client.wire} currentManagerId={view.manager} callingManagerId={view.callerId} initialError={view.error} />;
   const manager = view.manager;
   const storage = typeof window === 'undefined' ? undefined : window.localStorage;

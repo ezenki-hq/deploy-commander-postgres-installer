@@ -35,8 +35,13 @@ describe('run-backed App boot', () => {
     render(<App createClient={current.factory} />);
     await screen.findByRole('status');
     current.publish({ eventType: 'run-update', event: 'event', data: { type: 'event', payload: { id: 'run-0', status: 2 } } } as never);
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Install PostgreSQL' })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'PostgreSQL state needs recovery' })).toBeInTheDocument());
     expect(getRuns).toHaveBeenCalledTimes(2);
   });
-  it('ends the stable wire on unmount', () => { const current = fixture(); const view = render(<App createClient={current.factory} />); view.unmount(); expect(current.wire.end).toHaveBeenCalledOnce(); });
+  it('marks an installed run with no resource as contradiction attention', async () => {
+    const current = fixture({ getRuns: vi.fn().mockResolvedValue({ items: [run(2)], limit: 1, offset: 0, total: 1 }) });
+    render(<App createClient={current.factory} />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'PostgreSQL state needs recovery' })).toBeVisible());
+  });
+  it('ends the stable wire on unmount', async () => { const current = fixture(); const view = render(<App createClient={current.factory} />); view.unmount(); await waitFor(() => expect(current.wire.end).toHaveBeenCalledOnce()); });
 });
