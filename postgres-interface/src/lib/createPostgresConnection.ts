@@ -59,6 +59,7 @@ async function start(deps: ConnectionWorkflowDeps, action: 'create-connection' |
   return id;
 }
 async function install(deps: ConnectionWorkflowDeps): Promise<PostgresInstallation> {
+  aborted(deps.signal);
   const administrator = (deps.generateAdminCredentials ?? (() => { throw recovery(); }))();
   const note = `postgres-install:${operationId()}`;
   let runId = startedId(await deps.caller.start('create', IMAGE, buildInstallPlan(administrator), note).catch(() => null));
@@ -67,8 +68,12 @@ async function install(deps: ConnectionWorkflowDeps): Promise<PostgresInstallati
     if (match.kind !== 'found') throw new Error(START_ERROR);
     runId = match.id;
   }
-  try { await wait(deps, runId); } catch (error) {
+  let completed: RPC.GetRun;
+  try { completed = await wait(deps, runId); } catch (error) {
     if (isAbort(error)) throw error;
+    throw new Error('PostgreSQL installation failed');
+  }
+  if (!record(completed) || !record(completed.run) || completed.run.id !== runId || completed.run.status !== 2) {
     throw new Error('PostgreSQL installation failed');
   }
   // The runner-created resource is authoritative. Never continue with the
@@ -133,7 +138,7 @@ export async function createPostgresConnection(deps: ConnectionWorkflowDeps, req
   let allowed = isPermissionRemembered(deps.storage, request.currentManagerId, permissionResourceId);
   let remember = false;
   if (!allowed) { const decision = await deps.requestPermission({ installsPostgres: installation === null }); if (!decision || typeof decision.allowed !== 'boolean' || typeof decision.remember !== 'boolean') throw new Error('Invalid permission decision'); if (!decision.allowed) throw new Error('Database access was cancelled'); allowed = true; remember = decision.remember; if (decision.remember && installation) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
-  if (!installation) { installation = await install(deps); if (remember) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
+  if (!installation) { aborted(deps.signal); installation = await install(deps); if (remember) rememberPermission(deps.storage, request.currentManagerId, installation.resource.id); }
   // Always use the post-install resource configuration, including its current
   // administrator and platform connection, for all subsequent RPCs.
   installation = await resources(deps.caller) ?? (() => { throw recovery(); })();

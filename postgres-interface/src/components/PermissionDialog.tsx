@@ -44,6 +44,7 @@ export function PermissionDialog({
           >
             {callerId}
           </span>
+          {' '}
           {installsPostgres
             ? 'This request will install PostgreSQL, then create a logical database and credentials.'
             : 'requests a logical database and credentials from this PostgreSQL installation.'}
