@@ -16,6 +16,17 @@ describe('parseConnectionRequest', () => {
     ).toEqual({ labels: { team: 'payments' }, access: null });
   });
 
+  it('accepts labels matching object prototype property names', () => {
+    const labels = parseConnectionRequest({
+      action: 'create-connection',
+      labels: { constructor: 'class', ['__proto__']: 'prototype' },
+    }).labels;
+
+    expect(labels.constructor).toBe('class');
+    expect(labels['__proto__']).toBe('prototype');
+    expect(Object.keys(labels)).toEqual(['constructor', '__proto__']);
+  });
+
   it.each([
     {
       action: 'create-connection',

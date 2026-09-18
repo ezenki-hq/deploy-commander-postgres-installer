@@ -52,7 +52,7 @@ const parseLabels = (value: unknown): Record<string, string> => {
     if (key.length === 0) {
       invalid('label keys must not be empty');
     }
-    if (labels[key] !== undefined || Object.prototype.hasOwnProperty.call(labels, key)) {
+    if (Object.prototype.hasOwnProperty.call(labels, key)) {
       invalid(`duplicate label key after trimming: ${rawKey}`);
     }
     if (RESERVED_CONNECTION_LABELS.has(key)) {
