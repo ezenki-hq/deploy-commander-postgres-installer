@@ -180,6 +180,7 @@ function normalizeConnection(
   value: unknown,
   expected: ExpectedConnectionIdentity,
   platform: PlatformConnection,
+  options: { requireAccess?: boolean } = {},
 ): RPC.CreateConnection {
   const authoritativePlatform = parseAuthoritativePlatform(platform);
   const identity = normalizeExpected(expected);
@@ -224,6 +225,12 @@ function normalizeConnection(
   if (Object.prototype.hasOwnProperty.call(metadata, 'access')) {
     if (!validAccess(metadata.access)) throw invalidConnection();
     metadataAccess = metadata.access;
+  }
+  if (options.requireAccess && !metadataAccess) throw invalidConnection();
+  if (metadataAccess) {
+    const expectedDatabase =
+      metadataAccess.scope === 'database' ? metadataAccess.database : 'postgres';
+    if (metadata.database !== expectedDatabase) throw invalidConnection();
   }
   if (identity.access !== undefined) {
     if (!metadataAccess || !accessEqual(metadataAccess, identity.access)) throw invalidConnection();
@@ -361,13 +368,16 @@ export async function findExistingConnection(
         connectionId: summary.id,
       },
       platform,
+      { requireAccess: true },
     );
+    const summaryLabels = parseLabels(summary.labels);
+    const candidateLabels = parseLabels(normalized.connection.labels);
+    if (!sameLabels(summaryLabels, candidateLabels)) throw invalidConnection();
     const metadata = normalized.config.metadata as UnknownRecord;
     if (!access || !validAccess(metadata.access) || !accessEqual(metadata.access, access)) {
       continue;
     }
     identityMatches += 1;
-    const candidateLabels = parseLabels(normalized.connection.labels);
     if (sameLabels(candidateLabels, expected.labels ?? {})) {
       match = normalized;
     } else {

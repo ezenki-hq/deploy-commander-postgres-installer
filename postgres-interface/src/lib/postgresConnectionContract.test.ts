@@ -425,6 +425,86 @@ describe('exact multi-connection lookup', () => {
     ).resolves.toEqual({ kind: 'conflict', connectionId: summary.id });
   });
 
+  it.each([
+    [
+      'missing access discriminator',
+      (metadata: Record<string, unknown>) => {
+        const withoutAccess = { ...metadata };
+        delete withoutAccess.access;
+        return withoutAccess;
+      },
+    ],
+    [
+      'malformed access discriminator',
+      (metadata: Record<string, unknown>) => ({
+        ...metadata,
+        access: { scope: 'database', operation: 'existing', database: '' },
+      }),
+    ],
+    [
+      'incoherent access and default database',
+      (metadata: Record<string, unknown>) => ({
+        ...metadata,
+        database: 'postgres',
+      }),
+    ],
+  ])('requires recovery for candidate with %s', async (_name, mutate) => {
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({
+        items: [{ ...summary, labels: requestedLabels }],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      }),
+      getConnection: vi
+        .fn()
+        .mockResolvedValue(
+          candidate(summary.id, mutate(requestedMetadata(requestedAccess)), requestedLabels),
+        ),
+    } as unknown as RPCCaller;
+
+    await expect(
+      findExistingConnection(
+        caller,
+        {
+          managerId: 'manager-2',
+          resourceId: 'resource-1',
+          access: requestedAccess,
+          labels: requestedLabels,
+        },
+        platform,
+      ),
+    ).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
+  it('requires recovery when summary and detail labels disagree', async () => {
+    const detailLabels = { ...requestedLabels, team: 'different-team' };
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({
+        items: [{ ...summary, labels: requestedLabels }],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      }),
+      getConnection: vi
+        .fn()
+        .mockResolvedValue(candidate(summary.id, requestedMetadata(requestedAccess), detailLabels)),
+    } as unknown as RPCCaller;
+
+    await expect(
+      findExistingConnection(
+        caller,
+        {
+          managerId: 'manager-2',
+          resourceId: 'resource-1',
+          access: requestedAccess,
+          labels: requestedLabels,
+        },
+        platform,
+      ),
+    ).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
   it('distinguishes constrained full access from full superuser access', async () => {
     const superuserSummary = {
       ...summary,
