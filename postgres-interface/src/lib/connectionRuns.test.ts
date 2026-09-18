@@ -48,8 +48,10 @@ function runResult(
   const cleanup = action === 'cleanup-connection';
   const script =
     cleanup && access.scope === 'database' && access.operation === 'create'
-      ? 'DROP DATABASE %I'
-      : 'REVOKE ALL PRIVILEGES';
+      ? 'ALTER DATABASE %I; pg_terminate_backend; DROP DATABASE %I; REASSIGN OWNED BY; DROP OWNED BY; DROP ROLE'
+      : cleanup
+        ? "database_list=$(mktemp); has_database_privilege(current_user, datname, 'CONNECT'); REASSIGN OWNED BY; DROP OWNED BY; DROP ROLE"
+        : 'REVOKE ALL PRIVILEGES';
   const allLabels =
     access.scope === 'database'
       ? { ...labels, 'postgres.access': 'database', 'postgres.database': database }
@@ -238,9 +240,26 @@ describe('connection run records', () => {
     delete mutableMetadata(result).services['postgres-admin'].environment.ACCESS_MODE;
     delete mutableMetadata(result).services['postgres-admin'].environment.TARGET_PASSWORD;
     result.run.note = `postgres-provision:v1:${encodeURIComponent(identity.callerId)}:${encodeURIComponent(identity.resourceId)}:${identity.operationId}`;
+    expect(() => parseProvisionRun(result)).toThrow();
+    mutableMetadata(result).services['postgres-admin'].environment.TARGET_PASSWORD = password;
     expect(parseProvisionRun(result)).toMatchObject({
       access: { scope: 'database', operation: 'create' },
       login: { username },
+    });
+  });
+  it('keeps legacy cleanup recovery credential-free', () => {
+    const result = runResult('cleanup-connection', {
+      scope: 'database',
+      operation: 'create',
+      database: 'db_0123456789abcdef0123456789abcdef',
+    });
+    delete mutableMetadata(result).connections;
+    delete mutableMetadata(result).services['postgres-admin'].environment.ACCESS_MODE;
+    delete mutableMetadata(result).services['postgres-admin'].environment.TARGET_PASSWORD;
+    result.run.note = `postgres-cleanup:v1:${encodeURIComponent(identity.callerId)}:${encodeURIComponent(identity.resourceId)}:${identity.operationId}`;
+    expect(parseCleanupRun(result)).toMatchObject({
+      access: { scope: 'database', operation: 'create' },
+      login: { username, password: '' },
     });
   });
   it('requires catalog hooks for created database cleanup', () => {
@@ -259,6 +278,31 @@ describe('connection run records', () => {
       database: 'orders',
     });
     mutableMetadata(result).services['postgres-admin'].command[2] = 'DROP DATABASE orders';
+    expect(() => parseCleanupRun(result)).toThrow();
+  });
+  it('rejects lowercase database drops in role-only cleanup', () => {
+    const result = runResult('cleanup-connection', {
+      scope: 'database',
+      operation: 'existing',
+      database: 'orders',
+    });
+    mutableMetadata(result).services['postgres-admin'].command[2] =
+      "database_list=$(mktemp); has_database_privilege(current_user, datname, 'CONNECT'); drop database orders; REASSIGN OWNED BY; DROP OWNED BY; DROP ROLE";
+    expect(() => parseCleanupRun(result)).toThrow();
+  });
+  it('rejects lowercase mutations in created-database cleanup', () => {
+    const result = runResult('cleanup-connection', {
+      scope: 'database',
+      operation: 'create',
+      database: 'orders',
+    });
+    mutableMetadata(result).services['postgres-admin'].command[2] =
+      'ALTER DATABASE orders; pg_terminate_backend; drop database orders; REASSIGN OWNED BY; DROP OWNED BY; DROP ROLE';
+    expect(() => parseCleanupRun(result)).toThrow();
+  });
+  it('rejects arbitrary scripts for each cleanup mode', () => {
+    const result = runResult('cleanup-connection', { scope: 'full', superuser: false });
+    mutableMetadata(result).services['postgres-admin'].command[2] = 'echo cleanup';
     expect(() => parseCleanupRun(result)).toThrow();
   });
 });

@@ -371,11 +371,13 @@ function cleanupRecord(base: Omit<CleanupRunRecord, 'database' | 'username'>): C
 function legacyRecord(
   parsed: ReturnType<typeof readRun>,
   target: ReturnType<typeof readTarget>,
+  requirePassword: boolean,
 ): { access: AccessRequest; login: LoginCredentials; labels: Record<string, string> } {
   if (!GENERATED_DATABASE.test(target.database)) throw recovery();
   const service = readService(parsed.metadata);
   validateAdminEnvironment(service.environment);
   if (service.environment.ACCESS_MODE !== undefined) throw recovery();
+  if (requirePassword && target.password === undefined) throw recovery();
   return {
     access: { scope: 'database', operation: 'create', database: target.database },
     login: { username: target.username, password: target.password ?? '' },
@@ -391,7 +393,7 @@ export function parseProvisionRun(value: unknown): ProvisionRunRecord {
   const service = readService(metadata);
   const target = readTarget(service.environment);
   if (parsed.noteText.startsWith('postgres-provision:v1:')) {
-    const legacy = legacyRecord(parsed, target);
+    const legacy = legacyRecord(parsed, target, true);
     return provisionRecord({ identity, runId: parsed.run.id, status: parsed.status, ...legacy });
   }
   const connection = connectionEntry(metadata, identity);
@@ -427,7 +429,7 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
   const service = readService(metadata);
   const target = readTarget(service.environment);
   if (parsed.noteText.startsWith('postgres-cleanup:v1:')) {
-    const legacy = legacyRecord(parsed, target);
+    const legacy = legacyRecord(parsed, target, false);
     return cleanupRecord({ identity, runId: parsed.run.id, status: parsed.status, ...legacy });
   }
   validateAdminEnvironment(service.environment);
@@ -445,10 +447,7 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     if (target.database !== 'postgres') throw recovery();
     access = { scope: 'full', superuser: mode === 'full-superuser' };
   } else throw recovery();
-  const command = service.command;
-  const dropsDatabase = command.includes('DROP DATABASE');
-  if (dropsDatabase !== (access.scope === 'database' && access.operation === 'create'))
-    throw recovery();
+  validateCleanupScript(service.command, access);
   validateCleanupHook(metadata, access, identity.resourceId);
   if (target.password === undefined) throw recovery();
   return cleanupRecord({
@@ -459,4 +458,28 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     login: { username: target.username, password: target.password },
     labels: connectionLabels(access, {}),
   });
+}
+
+function validateCleanupScript(command: string, access: AccessRequest): void {
+  const hasDatabaseDrop = /\bDROP\s+DATABASE\b/i.test(command);
+  const createsDatabase = access.scope === 'database' && access.operation === 'create';
+  if (hasDatabaseDrop !== createsDatabase) throw recovery();
+
+  const required = createsDatabase
+    ? [
+        /ALTER\s+DATABASE/,
+        /pg_terminate_backend/,
+        /DROP\s+DATABASE/,
+        /REASSIGN\s+OWNED\s+BY/,
+        /DROP\s+OWNED\s+BY/,
+        /DROP\s+ROLE/,
+      ]
+    : [
+        /database_list\s*=\s*\$?\(\s*mktemp\s*\)/,
+        /has_database_privilege\s*\(/,
+        /REASSIGN\s+OWNED\s+BY/,
+        /DROP\s+OWNED\s+BY/,
+        /DROP\s+ROLE/,
+      ];
+  if (required.some((pattern) => !pattern.test(command))) throw recovery();
 }
