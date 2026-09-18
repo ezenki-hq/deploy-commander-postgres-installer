@@ -69,7 +69,9 @@ describe('run monitor', () => {
       source.publish(event('run-1', status));
       await vi.advanceTimersByTimeAsync(100);
       expect(getRun).toHaveBeenCalledTimes(1);
-      expect(await Promise.race([promise.then(() => 'resolved'), Promise.resolve('pending')])).toBe('pending');
+      expect(await Promise.race([promise.then(() => 'resolved'), Promise.resolve('pending')])).toBe(
+        'pending',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -118,7 +120,9 @@ describe('run monitor', () => {
       source.publish(event(undefined, 2));
       await vi.advanceTimersByTimeAsync(100);
       expect(getRun).toHaveBeenCalledTimes(1);
-      expect(await Promise.race([promise.then(() => 'resolved'), Promise.resolve('pending')])).toBe('pending');
+      expect(await Promise.race([promise.then(() => 'resolved'), Promise.resolve('pending')])).toBe(
+        'pending',
+      );
       promise.catch(() => undefined);
     } finally {
       vi.useRealTimers();
@@ -178,7 +182,7 @@ describe('run monitor', () => {
 
   it('rejects unknown statuses from events and polling', async () => {
     const source = createRunEventSource();
-      const eventPromise = waitForRun(callerWithGetRun(vi.fn()), source, 'run-1', { timeoutMs: 500 });
+    const eventPromise = waitForRun(callerWithGetRun(vi.fn()), source, 'run-1', { timeoutMs: 500 });
     source.publish(event('run-1', 99));
     await expect(eventPromise).rejects.toThrow('Unknown run status');
 
@@ -221,20 +225,30 @@ describe('run monitor', () => {
     vi.useFakeTimers();
     try {
       const source = createRunEventSource();
-      const timeoutPromise = waitForRun(callerWithGetRun(vi.fn().mockReturnValue(new Promise(() => undefined))), source, 'run-1', {
-        pollIntervalMs: 100,
-        timeoutMs: 200,
-      });
+      const timeoutPromise = waitForRun(
+        callerWithGetRun(vi.fn().mockReturnValue(new Promise(() => undefined))),
+        source,
+        'run-1',
+        {
+          pollIntervalMs: 100,
+          timeoutMs: 200,
+        },
+      );
       const timeoutAssertion = expect(timeoutPromise).rejects.toThrow('Timed out waiting for run');
       await vi.advanceTimersByTimeAsync(200);
       await timeoutAssertion;
 
       const controller = new AbortController();
-      const abortPromise = waitForRun(callerWithGetRun(vi.fn().mockReturnValue(new Promise(() => undefined))), source, 'run-1', {
-        pollIntervalMs: 100,
-        timeoutMs: 500,
-        signal: controller.signal,
-      });
+      const abortPromise = waitForRun(
+        callerWithGetRun(vi.fn().mockReturnValue(new Promise(() => undefined))),
+        source,
+        'run-1',
+        {
+          pollIntervalMs: 100,
+          timeoutMs: 500,
+          signal: controller.signal,
+        },
+      );
       const abortAssertion = expect(abortPromise).rejects.toMatchObject({ name: 'AbortError' });
       controller.abort();
       await abortAssertion;

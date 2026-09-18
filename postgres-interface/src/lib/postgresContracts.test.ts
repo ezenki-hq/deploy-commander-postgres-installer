@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  parsePlatformConnection,
-  type PlatformConnection,
-} from './postgresContracts';
+import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
 
 describe('runner transport contracts', () => {
   it('supports named connection creation and lifecycle database hooks', () => {

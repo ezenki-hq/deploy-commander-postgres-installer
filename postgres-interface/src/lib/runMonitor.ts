@@ -69,16 +69,25 @@ function unknownRunStatus(): Error {
 }
 
 function readRunStatus(result: RPC.GetRun, expectedRunId: string): number {
-  if (typeof result !== 'object' || result === null
-    || typeof result.run !== 'object' || result.run === null
-    || typeof result.run.id !== 'string' || result.run.id.trim().length === 0
-    || result.run.id !== expectedRunId) {
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    typeof result.run !== 'object' ||
+    result.run === null ||
+    typeof result.run.id !== 'string' ||
+    result.run.id.trim().length === 0 ||
+    result.run.id !== expectedRunId
+  ) {
     throw invalidRunResponse();
   }
 
   const status = result.run.status;
-  if (status !== STATUS_QUEUED && status !== STATUS_RUNNING
-    && status !== STATUS_DONE && status !== STATUS_FAILED) {
+  if (
+    status !== STATUS_QUEUED &&
+    status !== STATUS_RUNNING &&
+    status !== STATUS_DONE &&
+    status !== STATUS_FAILED
+  ) {
     throw unknownRunStatus();
   }
   return status;
@@ -87,8 +96,12 @@ function readRunStatus(result: RPC.GetRun, expectedRunId: string): number {
 function normalizeWaitOptions(options: WaitOptions): { pollIntervalMs: number; timeoutMs: number } {
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 0
-    || !Number.isFinite(timeoutMs) || timeoutMs < 0) {
+  if (
+    !Number.isFinite(pollIntervalMs) ||
+    pollIntervalMs < 0 ||
+    !Number.isFinite(timeoutMs) ||
+    timeoutMs < 0
+  ) {
     throw new Error('Invalid run wait options');
   }
   return { pollIntervalMs, timeoutMs };
@@ -153,13 +166,16 @@ export function waitForRun(
     const poll = () => {
       if (settled || polling) return;
       polling = true;
-      Promise.resolve().then(() => caller.getRun(runId)).then((result) => {
-        polling = false;
-        inspectResult(result);
-      }).catch((error: unknown) => {
-        polling = false;
-        fail(error);
-      });
+      Promise.resolve()
+        .then(() => caller.getRun(runId))
+        .then((result) => {
+          polling = false;
+          inspectResult(result);
+        })
+        .catch((error: unknown) => {
+          polling = false;
+          fail(error);
+        });
     };
 
     const onEvent = (event: Events.InterfaceEvent) => {

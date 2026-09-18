@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import ConnectionApprovalDialog, { type ConnectionApprovalDialogProps } from './ConnectionApprovalDialog';
+import ConnectionApprovalDialog, {
+  type ConnectionApprovalDialogProps,
+} from './ConnectionApprovalDialog';
 
 afterEach(cleanup);
 
@@ -69,10 +71,14 @@ describe('ConnectionApprovalDialog', () => {
     expect(screen.getByText(/install PostgreSQL/i)).toBeVisible();
     expect(screen.getByRole('button', { name: /approve connection/i })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Generate database name' }));
-    expect(screen.getByRole('textbox', { name: /database name/i })).toHaveValue('db_0123456789abcdef0123456789abcdef');
+    expect(screen.getByRole('textbox', { name: /database name/i })).toHaveValue(
+      'db_0123456789abcdef0123456789abcdef',
+    );
     await user.click(screen.getByRole('button', { name: /approve connection/i }));
     expect(onApprove).toHaveBeenCalledWith({
-      scope: 'database', operation: 'create', database: 'db_0123456789abcdef0123456789abcdef',
+      scope: 'database',
+      operation: 'create',
+      database: 'db_0123456789abcdef0123456789abcdef',
     });
   });
 
@@ -81,13 +87,24 @@ describe('ConnectionApprovalDialog', () => {
     const onApprove = vi.fn();
     renderDialog({
       onApprove,
-      context: { ...completeContext, requestedAccess: null, catalogDatabases: ['orders', 'analytics'] },
+      context: {
+        ...completeContext,
+        requestedAccess: null,
+        catalogDatabases: ['orders', 'analytics'],
+      },
     });
 
     await user.click(screen.getByRole('radio', { name: /use an existing database/i }));
-    await user.selectOptions(screen.getByRole('combobox', { name: /available database/i }), 'analytics');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /available database/i }),
+      'analytics',
+    );
     await user.click(screen.getByRole('button', { name: /approve connection/i }));
-    expect(onApprove).toHaveBeenCalledWith({ scope: 'database', operation: 'existing', database: 'analytics' });
+    expect(onApprove).toHaveBeenCalledWith({
+      scope: 'database',
+      operation: 'existing',
+      database: 'analytics',
+    });
   });
 
   it('warns for dedicated superuser access', async () => {

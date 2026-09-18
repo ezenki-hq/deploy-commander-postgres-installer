@@ -16,10 +16,12 @@ describe('interface client', () => {
       eventType: 'run-start',
       data: { id: 'run-1', manager: 'manager-1', action: 'test' },
     };
-    window.dispatchEvent(new MessageEvent('message', {
-      data: event,
-      source: window.parent,
-    }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: event,
+        source: window.parent,
+      }),
+    );
     expect(onEvent).toHaveBeenCalledWith(event);
 
     client.wire.end();
@@ -44,25 +46,30 @@ describe('interface client', () => {
     const client = createInterfaceClient(vi.fn());
     const postMessage = vi.spyOn(window.parent, 'postMessage');
 
-    window.dispatchEvent(new MessageEvent('message', {
-      data: {
-        type: 'rpc.send',
-        wireId: 'wire-1',
-        request: 'privateRequest',
-        payload: { secret: 'must-not-log' },
-      },
-      source: window.parent,
-    }));
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: 'rpc.send',
+          wireId: 'wire-1',
+          request: 'privateRequest',
+          payload: { secret: 'must-not-log' },
+        },
+        source: window.parent,
+      }),
+    );
     await Promise.resolve();
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: 'rpc.send-res',
-      wireId: 'wire-1',
-      from: undefined,
-      to: undefined,
-      ok: false,
-      error: { message: 'Unsupported request: privateRequest' },
-    }, '*');
+    expect(postMessage).toHaveBeenCalledWith(
+      {
+        type: 'rpc.send-res',
+        wireId: 'wire-1',
+        from: undefined,
+        to: undefined,
+        ok: false,
+        error: { message: 'Unsupported request: privateRequest' },
+      },
+      '*',
+    );
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('must-not-log'));
     expect(error).not.toHaveBeenCalledWith(expect.stringContaining('must-not-log'));
     client.wire.end();

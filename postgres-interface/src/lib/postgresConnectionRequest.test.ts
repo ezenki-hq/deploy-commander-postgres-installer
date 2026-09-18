@@ -6,7 +6,30 @@ import {
   sameLabels,
 } from './postgresConnectionRequest';
 
+const GUIDE_REQUEST_FIXTURES = [
+  { action: 'create-connection', labels: { team: 'payments' } },
+  {
+    action: 'create-connection',
+    scope: 'database',
+    operation: 'create',
+    database: 'orders',
+    labels: { environment: 'production' },
+  },
+  {
+    action: 'create-connection',
+    scope: 'database',
+    operation: 'existing',
+    database: 'warehouse',
+  },
+  { action: 'create-connection', scope: 'full', superuser: false },
+  { action: 'create-connection', scope: 'full', superuser: true },
+] as const;
+
 describe('parseConnectionRequest', () => {
+  it.each(GUIDE_REQUEST_FIXTURES)('accepts the guide request fixture %#', (metadata) => {
+    expect(() => parseConnectionRequest(metadata)).not.toThrow();
+  });
+
   it('accepts labels-only metadata for user configuration', () => {
     expect(
       parseConnectionRequest({
@@ -68,6 +91,15 @@ describe('parseConnectionRequest', () => {
     },
   ])('rejects malformed or conflicting metadata %#', (metadata) => {
     expect(() => parseConnectionRequest(metadata)).toThrow('Invalid PostgreSQL connection request');
+  });
+
+  it.each(['postgres.access', 'postgres.database'])('rejects reserved label %s', (key) => {
+    expect(() =>
+      parseConnectionRequest({
+        action: 'create-connection',
+        labels: { [key]: 'caller-value' },
+      }),
+    ).toThrow('Invalid PostgreSQL connection request');
   });
 });
 

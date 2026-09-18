@@ -48,7 +48,9 @@ describe('operational console primitives', () => {
     expect(action).not.toHaveBeenCalled();
 
     view.rerender(
-      <ActionButton tone="primary" onClick={action}>Install PostgreSQL</ActionButton>,
+      <ActionButton tone="primary" onClick={action}>
+        Install PostgreSQL
+      </ActionButton>,
     );
     await user.click(screen.getByRole('button', { name: 'Install PostgreSQL' }));
     expect(action).toHaveBeenCalledOnce();

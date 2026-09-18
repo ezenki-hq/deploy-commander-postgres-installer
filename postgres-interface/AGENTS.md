@@ -36,17 +36,17 @@ Read the closest applicable `AGENTS.md` file before modifying code.
 
 The application currently supports:
 
-* Installing a PostgreSQL service.
-* Creating a Deploy Commander PostgreSQL resource.
-* Creating persistent PostgreSQL storage.
-* Tracking installer runs.
-* Tearing down the PostgreSQL installation.
+- Installing a PostgreSQL service.
+- Creating a Deploy Commander PostgreSQL resource.
+- Creating persistent PostgreSQL storage.
+- Tracking installer runs.
+- Tearing down the PostgreSQL installation.
 
 The project will also support:
 
-* Creating connections to the installed PostgreSQL resource.
-* Listing existing PostgreSQL connections.
-* Destroying PostgreSQL connections.
+- Creating connections to the installed PostgreSQL resource.
+- Listing existing PostgreSQL connections.
+- Destroying PostgreSQL connections.
 
 Installation lifecycle and connection lifecycle are separate concerns and must remain separate in the code.
 
@@ -54,13 +54,13 @@ Installation lifecycle and connection lifecycle are separate concerns and must r
 
 The project uses:
 
-* React 19
-* TypeScript
-* Vite
-* Tailwind CSS
-* ESLint
-* `@ezenki/deploy-commander-installer-interface`
-* Deploy Commander runner metadata
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- ESLint
+- `@ezenki/deploy-commander-installer-interface`
+- Deploy Commander runner metadata
 
 The development container uses Node.js 20.
 
@@ -112,13 +112,13 @@ The installer interface provides the wire protocol, typed RPC caller, events, an
 
 The frontend must not directly manage:
 
-* Docker services.
-* Docker volumes.
-* PostgreSQL users.
-* PostgreSQL databases.
-* Deploy Commander resources.
-* Deploy Commander connections.
-* Run persistence.
+- Docker services.
+- Docker volumes.
+- PostgreSQL users.
+- PostgreSQL databases.
+- Deploy Commander resources.
+- Deploy Commander connections.
+- Run persistence.
 
 Those operations must be expressed through supported RPC calls and runner actions.
 
@@ -167,9 +167,9 @@ Do not change action names or the runner image casually. They are part of the co
 
 When new connection-related actions are introduced, confirm whether they should:
 
-* Use direct installer RPC calls.
-* Start runner actions.
-* Use a combination of both.
+- Use direct installer RPC calls.
+- Start runner actions.
+- Use a combination of both.
 
 Do not assume connection creation requires a runner action without checking the available RPC interface.
 
@@ -177,11 +177,11 @@ Do not assume connection creation requires a runner action without checking the 
 
 The current install component starts a run that declares:
 
-* A service named `postgres`.
-* The Docker image `postgres:15`.
-* PostgreSQL user and password environment variables.
-* A Deploy Commander resource.
-* A persistent volume named `postgres-data`.
+- A service named `postgres`.
+- The Docker image `postgres:15`.
+- PostgreSQL user and password environment variables.
+- A Deploy Commander resource.
+- A persistent volume named `postgres-data`.
 
 The current resource identity is:
 
@@ -202,11 +202,11 @@ Treat this data as sensitive.
 
 Before expanding metadata, determine whether each value belongs in:
 
-* Service environment variables.
-* Resource metadata.
-* Connection data.
-* Platform data.
-* A Deploy Commander-managed secret or object store.
+- Service environment variables.
+- Resource metadata.
+- Connection data.
+- Platform data.
+- A Deploy Commander-managed secret or object store.
 
 Do not place connection-specific credentials in installation metadata unless they are genuinely part of the installed resource.
 
@@ -220,8 +220,8 @@ Connection management must follow Deploy Commander ownership rules.
 
 A connection should only be created when the calling manager is allowed to access:
 
-* A resource owned by that manager, or
-* A connection or resource relationship authorized by Deploy Commander.
+- A resource owned by that manager, or
+- A connection or resource relationship authorized by Deploy Commander.
 
 Use supported RPC calls to retrieve the calling manager identity and available resources.
 
@@ -248,12 +248,12 @@ Do not invent an incompatible frontend-only format.
 
 Keep a clear distinction between:
 
-* The PostgreSQL administrator credentials used to initialize the service.
-* A database user created for another manager.
-* A Deploy Commander connection record.
-* Public connection information.
-* Private connection information.
-* Platform-specific connection data.
+- The PostgreSQL administrator credentials used to initialize the service.
+- A database user created for another manager.
+- A Deploy Commander connection record.
+- Public connection information.
+- Private connection information.
+- Platform-specific connection data.
 
 Sensitive values must not be stored in local storage or session storage without an explicit design decision.
 
@@ -267,10 +267,10 @@ Once connection actions are added, the most recent run may be a connection actio
 
 Before adding connection action runs, update the installation-state design so it relies on a reliable signal, such as:
 
-* The existence of the PostgreSQL resource.
-* A dedicated installer status RPC.
-* Filtering runs only for installation lifecycle actions.
-* Another authoritative state supported by Deploy Commander.
+- The existence of the PostgreSQL resource.
+- A dedicated installer status RPC.
+- Filtering runs only for installation lifecycle actions.
+- Another authoritative state supported by Deploy Commander.
 
 Do not allow connection actions to cause the interface to display the install screen incorrectly.
 
@@ -280,12 +280,12 @@ The application tracks active runs through interface events.
 
 Keep these concerns separate:
 
-* Whether PostgreSQL is installed.
-* Whether an installer action is currently running.
-* Which action is running.
-* Whether a connection operation is running.
-* Whether an RPC request is loading.
-* Whether an operation failed.
+- Whether PostgreSQL is installed.
+- Whether an installer action is currently running.
+- Which action is running.
+- Whether a connection operation is running.
+- Whether an RPC request is loading.
+- Whether an operation failed.
 
 Avoid a single ambiguous boolean when richer state is required.
 
@@ -295,12 +295,12 @@ Prefer explicit state models as the feature set expands.
 
 The UI should make these operations clear:
 
-* Install PostgreSQL.
-* View installation status.
-* Create a connection.
-* View existing connections.
-* Delete a connection.
-* Teardown PostgreSQL.
+- Install PostgreSQL.
+- View installation status.
+- Create a connection.
+- View existing connections.
+- Delete a connection.
+- Teardown PostgreSQL.
 
 Destructive actions must be clearly identified.
 
@@ -308,10 +308,10 @@ Deleting a connection must not be presented as equivalent to tearing down Postgr
 
 The user should understand whether an action affects:
 
-* A single connection.
-* A PostgreSQL database user.
-* The PostgreSQL resource.
-* The entire PostgreSQL service and volume.
+- A single connection.
+- A PostgreSQL database user.
+- The PostgreSQL resource.
+- The entire PostgreSQL service and volume.
 
 ## React Conventions
 
@@ -354,10 +354,10 @@ A `features/connections` folder may become appropriate once connection managemen
 
 If moving files or responsibilities between folders:
 
-* State the move explicitly.
-* Update imports.
-* Update applicable `AGENTS.md` files.
-* Avoid silently changing the project structure.
+- State the move explicitly.
+- Update imports.
+- Update applicable `AGENTS.md` files.
+- Avoid silently changing the project structure.
 
 ## Styling
 
@@ -386,14 +386,14 @@ All interactive elements must be keyboard accessible.
 
 Requirements include:
 
-* Clear button labels.
-* Associated labels for form inputs.
-* Visible focus states.
-* Proper disabled states.
-* Readable error messages.
-* Clear loading and running states.
-* Explicit destructive-action wording.
-* No reliance on color alone for status.
+- Clear button labels.
+- Associated labels for form inputs.
+- Visible focus states.
+- Proper disabled states.
+- Readable error messages.
+- Clear loading and running states.
+- Explicit destructive-action wording.
+- No reliance on color alone for status.
 
 Use accessible status messaging for asynchronous operations where practical.
 
@@ -403,14 +403,14 @@ PostgreSQL credentials and connection data are sensitive.
 
 Never:
 
-* Log passwords.
-* Include passwords in URLs.
-* Render passwords in general status messages.
-* Store secrets in browser persistence by default.
-* Include credentials in exception text.
-* Commit fixed production credentials.
-* Trust browser state as authorization.
-* Expose private connection data to managers that do not own it.
+- Log passwords.
+- Include passwords in URLs.
+- Render passwords in general status messages.
+- Store secrets in browser persistence by default.
+- Include credentials in exception text.
+- Commit fixed production credentials.
+- Trust browser state as authorization.
+- Expose private connection data to managers that do not own it.
 
 The current hard-coded user and password are development placeholders and must not remain as production behavior.
 
@@ -424,12 +424,12 @@ Handle RPC and runner failures explicitly.
 
 The UI should:
 
-* Exit loading states after failures.
-* Present a useful error message.
-* Allow retry when safe.
-* Identify the failed operation.
-* Avoid leaking secrets.
-* Avoid duplicate submissions after partial failures.
+- Exit loading states after failures.
+- Present a useful error message.
+- Allow retry when safe.
+- Identify the failed operation.
+- Avoid leaking secrets.
+- Avoid duplicate submissions after partial failures.
 
 Do not rely only on `console.log`.
 
@@ -443,14 +443,14 @@ Validate user input before starting connection operations.
 
 Likely validation includes:
 
-* Required database name.
-* Required username.
-* Valid port.
-* Valid resource identifier.
-* Valid manager ownership context.
-* Password requirements.
-* Duplicate connection checks.
-* Safe PostgreSQL identifier rules.
+- Required database name.
+- Required username.
+- Valid port.
+- Valid resource identifier.
+- Valid manager ownership context.
+- Password requirements.
+- Duplicate connection checks.
+- Safe PostgreSQL identifier rules.
 
 Client-side validation improves usability but does not replace API-side validation.
 
@@ -552,17 +552,17 @@ Add tests when logic becomes substantial enough to justify them.
 
 Priority areas include:
 
-* Installer state detection.
-* Run event processing.
-* Install metadata construction.
-* Teardown action invocation.
-* Connection listing.
-* Connection creation.
-* Connection deletion.
-* Duplicate connection prevention.
-* Ownership-related UI behavior.
-* RPC failure handling.
-* Sensitive data not appearing in output.
+- Installer state detection.
+- Run event processing.
+- Install metadata construction.
+- Teardown action invocation.
+- Connection listing.
+- Connection creation.
+- Connection deletion.
+- Duplicate connection prevention.
+- Ownership-related UI behavior.
+- RPC failure handling.
+- Sensitive data not appearing in output.
 
 Mock the shared RPC caller for unit and component tests.
 
