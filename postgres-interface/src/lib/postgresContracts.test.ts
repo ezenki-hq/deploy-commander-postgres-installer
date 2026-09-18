@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  isCreateConnectionMetadata,
   parsePlatformConnection,
   type PlatformConnection,
 } from './postgresContracts';
@@ -39,23 +38,6 @@ describe('runner transport contracts', () => {
         },
       ],
     }).toMatchObject({ connections: { create: [{ name: 'postgres-connection' }] } });
-  });
-});
-
-describe('isCreateConnectionMetadata', () => {
-  it('accepts only the exact create-connection action object', () => {
-    expect(isCreateConnectionMetadata({ action: 'create-connection' })).toBe(true);
-  });
-
-  it.each([
-    null,
-    [],
-    { action: 'create' },
-    { action: 'create-connection', caller: 'manager' },
-    { action: 'create-connection', resource: 'resource' },
-    { action: 'create-connection', extra: undefined },
-  ])('rejects %j', (value) => {
-    expect(isCreateConnectionMetadata(value)).toBe(false);
   });
 });
 

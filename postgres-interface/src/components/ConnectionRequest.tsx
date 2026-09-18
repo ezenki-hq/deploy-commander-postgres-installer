@@ -54,6 +54,9 @@ function errorResponse(error: unknown): { status: number; message: string } {
   if (error instanceof Error && error.message === 'A calling manager is required') {
     return { status: 400, message: 'A calling manager is required' };
   }
+  if (error instanceof Error && error.message === 'Invalid PostgreSQL connection request') {
+    return { status: 400, message: 'Invalid PostgreSQL connection request' };
+  }
   if (error instanceof Error && error.message === 'Database access was cancelled') {
     return { status: 499, message: 'Database access was cancelled' };
   }

@@ -75,17 +75,6 @@ function isRecord(value: unknown): value is RecordValue {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function isCreateConnectionMetadata(
-  value: unknown,
-): value is { action: 'create-connection' } {
-  return (
-    isRecord(value) &&
-    Object.keys(value).length === 1 &&
-    Object.keys(value)[0] === 'action' &&
-    value.action === 'create-connection'
-  );
-}
-
 export function parsePlatformConnection(value: unknown): PlatformConnection {
   if (
     !isRecord(value) ||

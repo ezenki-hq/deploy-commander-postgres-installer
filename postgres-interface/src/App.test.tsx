@@ -29,6 +29,28 @@ describe('run-backed App boot', () => {
     render(<App createClient={current.factory} />);
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Preparing PostgreSQL connection'));
   });
+  it('passes complete connection metadata into the approval flow', async () => {
+    const current = fixture({}, {
+      action: 'create-connection',
+      scope: 'full',
+      superuser: true,
+      labels: { team: 'payments' },
+    });
+    render(<App createClient={current.factory} />);
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible());
+    expect(screen.getByText('Dedicated superuser')).toBeVisible();
+    expect(screen.getByText('team=payments')).toBeVisible();
+  });
+  it('closes malformed connection metadata with a normalized 400', async () => {
+    const current = fixture({}, { action: 'create-connection', scope: 'database' });
+    render(<App createClient={current.factory} />);
+    await waitFor(() => expect(current.wire.close).toHaveBeenCalledWith({
+      manager: 'postgres-manager',
+      ok: false,
+      error: { status: 400, message: 'Invalid PostgreSQL connection request' },
+    }));
+    expect(current.caller.getMyResources).not.toHaveBeenCalled();
+  });
   it('refreshes latest lifecycle after a terminal run update', async () => {
     const getRuns = vi.fn().mockResolvedValueOnce({ items: [run(0)], limit: 1, offset: 0, total: 1 }).mockResolvedValue({ items: [run(2)], limit: 1, offset: 0, total: 1 });
     const current = fixture({ getRuns });

@@ -8,15 +8,24 @@ import ManagerShell from './components/ManagerShell';
 import StatusPanel from './components/StatusPanel';
 import { createInterfaceClient, type AppClient } from './lib/interfaceClient';
 import { createRunEventSource } from './lib/runMonitor';
-import { isCreateConnectionMetadata } from './lib/postgresContracts';
+import { parseConnectionRequest, type ParsedConnectionRequest } from './lib/postgresConnectionRequest';
 import { listPostgresResources, readPostgresInstallation } from './lib/postgresResource';
 import { readPostgresLifecycle, type PostgresLifecycle } from './lib/postgresRuns';
 import { installPostgres, teardownPostgres } from './lib/lifecycleActions';
-import { clearPermission, isPermissionRemembered } from './lib/permissionPreference';
 
 export type AppClientFactory = (onEvent: (event: Events.InterfaceEvent) => void) => AppClient;
 export interface AppProps { createClient?: AppClientFactory; }
-type View = { kind: 'dashboard'; manager: string; lifecycle: PostgresLifecycle; resource: RPC.ResourceItem | null; compatible: boolean; ambiguous: boolean; contradiction: boolean; error: string | null } | { kind: 'connection'; manager: string; callerId: string | null; error: string | null } | { kind: 'error'; message: string };
+type DashboardView = { kind: 'dashboard'; manager: string; lifecycle: PostgresLifecycle; resource: RPC.ResourceItem | null; compatible: boolean; ambiguous: boolean; contradiction: boolean; error: string | null };
+type ConnectionView = { kind: 'connection'; manager: string; callerId: string | null; metadata: ParsedConnectionRequest; error: string | null };
+type ErrorView = { kind: 'error'; message: string };
+type View = DashboardView | ConnectionView | ErrorView;
+
+const EMPTY_CONNECTION_REQUEST: ParsedConnectionRequest = { access: null, labels: {} };
+
+function isConnectionRequestMetadata(value: unknown): value is { action: 'create-connection' } {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    && (value as { action?: unknown }).action === 'create-connection';
+}
 
 function managerId(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value : null; }
 function safeError(error: unknown): string { return error instanceof Error && error.message === 'Unable to identify the PostgreSQL manager' ? error.message : 'Unable to load PostgreSQL manager state'; }
@@ -66,9 +75,25 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       const manager = managerId(await client.caller.getManager());
       if (!manager) throw new Error('Unable to identify the PostgreSQL manager');
       const metadata = await client.caller.getMetadata();
-      if (isCreateConnectionMetadata(metadata)) {
+      if (isConnectionRequestMetadata(metadata)) {
         const caller = managerId(await client.caller.getCallingManager().catch(() => null));
-        return { kind: 'connection', manager, callerId: caller, error: caller ? null : 'A calling manager is required' };
+        try {
+          return {
+            kind: 'connection',
+            manager,
+            callerId: caller,
+            metadata: parseConnectionRequest(metadata),
+            error: caller ? null : 'A calling manager is required',
+          };
+        } catch {
+          return {
+            kind: 'connection',
+            manager,
+            callerId: caller,
+            metadata: EMPTY_CONNECTION_REQUEST,
+            error: 'Invalid PostgreSQL connection request',
+          };
+        }
       }
       const [{ lifecycle }, resources] = await Promise.all([readPostgresLifecycle(client.caller), listPostgresResources(client.caller)]);
       const resource = resources.length === 1 ? resources[0] : null;
@@ -86,10 +111,7 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
   if (!view) return <ManagerShell badge={{ label: 'Loading', tone: 'progress' }}><StatusPanel tone="progress" eyebrow="Manager startup" title="Loading manager state" role="status">Checking PostgreSQL installation and recovery state.</StatusPanel></ManagerShell>;
   if (view.kind === 'error') return <ManagerShell badge={{ label: 'Unavailable', tone: 'danger' }}><StatusPanel tone="danger" eyebrow="Manager startup" title="Manager startup requires attention" role="alert" actions={<ActionButton tone="secondary" onClick={retry}>Retry</ActionButton>}>{view.message}</StatusPanel></ManagerShell>;
   if (!client) return null;
-  if (view.kind === 'connection') return <ConnectionRequest caller={client.caller} events={client.events} wire={client.wire} currentManagerId={view.manager} callingManagerId={view.callerId} initialError={view.error} />;
-  const manager = view.manager;
-  const storage = typeof window === 'undefined' ? undefined : window.localStorage;
-  const remembered = Boolean(view.resource && storage && isPermissionRemembered(storage, manager, view.resource.id));
+  if (view.kind === 'connection') return <ConnectionRequest caller={client.caller} events={client.events} wire={client.wire} currentManagerId={view.manager} callingManagerId={view.callerId} metadata={view.metadata} initialError={view.error} />;
   const run = (kind: Exclude<LifecycleAction, null>, operation: (signal: AbortSignal) => Promise<void>) => { if (action) return; const controller = new AbortController(); controllerRef.current = controller; setAction(kind); setActionError(null); void operation(controller.signal).then(retry).catch((error: unknown) => { if (error instanceof Error && error.name === 'AbortError') return; setActionError(error instanceof Error && error.message.includes('failed') ? error.message : 'Unable to complete PostgreSQL lifecycle action'); }).finally(() => setAction(null)); };
-  return <ManagerDashboard lifecycle={view.lifecycle} resource={view.resource} resourceCompatible={view.compatible} resourceAmbiguous={view.ambiguous} resourceContradiction={view.contradiction} activeAction={action} error={actionError ?? view.error} permissionRemembered={remembered} onInstall={() => run('install', (signal) => installPostgres({ caller: client.caller, events: client.events, signal }))} onTeardown={() => run('teardown', (signal) => teardownPostgres({ caller: client.caller, events: client.events, signal }))} onRetry={retry} onResetPermission={() => { if (view.resource && storage) { clearPermission(storage, manager, view.resource.id); retry(); } }} />;
+  return <ManagerDashboard lifecycle={view.lifecycle} resource={view.resource} resourceCompatible={view.compatible} resourceAmbiguous={view.ambiguous} resourceContradiction={view.contradiction} activeAction={action} error={actionError ?? view.error} onInstall={() => run('install', (signal) => installPostgres({ caller: client.caller, events: client.events, signal }))} onTeardown={() => run('teardown', (signal) => teardownPostgres({ caller: client.caller, events: client.events, signal }))} onRetry={retry} />;
 }
