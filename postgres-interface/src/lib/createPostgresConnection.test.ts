@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import { createPostgresConnection, type ConnectionWorkflowDeps } from './createPostgresConnection';
 import type { PlatformConnection } from './postgresContracts';
-import { PostgresRequestError } from './postgresErrors';
+import { RunFailedError } from './runMonitor';
 
 const platform: PlatformConnection = { type: 'Platform', data: { network: 'postgres-network' } };
 const resource: RPC.ResourceItem = {
@@ -164,6 +164,12 @@ describe('createPostgresConnection', () => {
       getRuns: vi.fn().mockResolvedValue({ items: [], limit: 1, offset: 0, total: 0 }),
       databaseQuery: vi.fn().mockResolvedValue({ results: [{ status: 'OK', result: [] }] }),
       getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
+      getRunLogs: vi.fn().mockResolvedValue({
+        items: [{ message: 'POSTGRES_MANAGER_ERROR: database-not-found' }],
+        limit: 200,
+        offset: 0,
+        total: 1,
+      }),
       start: vi.fn().mockImplementation(() => ({ id: 'run-1', status: 0, queued_at: 'now' })),
     } as unknown as RPCCaller;
     const requestApproval = vi.fn().mockResolvedValue({
@@ -175,7 +181,7 @@ describe('createPostgresConnection', () => {
     workflow.waitForRun = vi.fn().mockImplementation(() => {
       waitCount += 1;
       return waitCount === 1
-        ? Promise.reject(new PostgresRequestError(404, 'database not found'))
+        ? Promise.reject(new RunFailedError('run-1', 3))
         : Promise.resolve({ run: { id: 'run-1', status: 2 } });
     });
 

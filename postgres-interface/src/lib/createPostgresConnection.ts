@@ -22,7 +22,7 @@ import {
   type ConnectionOperationIdentity,
   type ProvisionRunRecord,
 } from './connectionRuns';
-import { waitForRun, type RunEventSource } from './runMonitor';
+import { RunFailedError, waitForRun, type RunEventSource } from './runMonitor';
 import { PostgresRecoveryRequiredError, PostgresRequestError } from './postgresErrors';
 import { buildInstallPlan } from './installPlan';
 import { listCatalogDatabases } from './postgresCatalog';
@@ -86,6 +86,60 @@ function isAbort(value: unknown): boolean {
 
 function isDatabaseRequestError(value: unknown): value is PostgresRequestError {
   return value instanceof PostgresRequestError && (value.status === 404 || value.status === 409);
+}
+
+type DatabaseFailureStatus = 404 | 409;
+
+/**
+ * Runner-role failures expose only the terminal run status through waitForRun.
+ * Access plans therefore emit a non-secret marker for the two user-correctable
+ * database conditions, which can be read from the durable run log and normalized
+ * at the child-interface boundary.
+ */
+async function databaseFailureStatus(
+  caller: RPCCaller,
+  runId: string,
+  access: AccessRequest,
+  error: unknown,
+): Promise<DatabaseFailureStatus | null> {
+  if (!(error instanceof RunFailedError) || access.scope !== 'database') return null;
+  const getRunLogs = (
+    caller as unknown as {
+      getRunLogs?: (options: Record<string, unknown>) => Promise<unknown>;
+    }
+  ).getRunLogs;
+  if (typeof getRunLogs !== 'function') return null;
+  try {
+    const response = await getRunLogs({ run_id: runId, limit: 200, offset: 0, order: 'asc' });
+    if (
+      typeof response !== 'object' ||
+      response === null ||
+      !Array.isArray((response as { items?: unknown }).items)
+    ) {
+      return null;
+    }
+    const messages = (response as { items: unknown[] }).items
+      .filter(
+        (item): item is { message: string } =>
+          typeof item === 'object' &&
+          item !== null &&
+          typeof (item as { message?: unknown }).message === 'string',
+      )
+      .map((item) => item.message);
+    if (
+      messages.some((message) => message.includes('POSTGRES_MANAGER_ERROR: database-not-found'))
+    ) {
+      return 404;
+    }
+    if (
+      messages.some((message) => message.includes('POSTGRES_MANAGER_ERROR: database-collision'))
+    ) {
+      return 409;
+    }
+  } catch {
+    // A log lookup failure must not hide the original normalized run failure.
+  }
+  return null;
 }
 
 function operationId(): string {
@@ -448,8 +502,17 @@ export async function createPostgresConnection(
     await wait(deps, runId);
   } catch (error) {
     if (isAbort(error)) throw error;
+    const failureStatus = await databaseFailureStatus(deps.caller, runId, access, error);
     await cleanupRetry(deps, installation, identity, access, login);
     if (isDatabaseRequestError(error)) throw error;
+    if (failureStatus !== null) {
+      throw new PostgresRequestError(
+        failureStatus,
+        failureStatus === 404
+          ? 'Requested PostgreSQL database was not found'
+          : 'Requested PostgreSQL database already exists',
+      );
+    }
     throw new Error(RUN_ERROR);
   }
 

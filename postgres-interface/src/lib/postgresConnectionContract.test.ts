@@ -3,6 +3,7 @@ import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interfac
 import type { PlatformConnection } from './postgresContracts';
 import { findExistingConnection, normalizePostgresConnection } from './postgresConnectionContract';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
+import type { AccessRequest } from './postgresConnectionRequest';
 
 const platform: PlatformConnection = {
   type: 'Platform',
@@ -242,7 +243,7 @@ const requestedLabels = {
 };
 
 function requestedMetadata(
-  access: typeof requestedAccess | { scope: 'full'; superuser: boolean },
+  access: AccessRequest,
   database = access.scope === 'database' ? access.database : 'postgres',
 ) {
   return {
@@ -409,6 +410,34 @@ describe('exact multi-connection lookup', () => {
         .mockResolvedValue(
           candidate(summary.id, requestedMetadata(requestedAccess), conflictingLabels),
         ),
+    } as unknown as RPCCaller;
+
+    await expect(
+      findExistingConnection(
+        caller,
+        {
+          managerId: 'manager-2',
+          resourceId: 'resource-1',
+          access: requestedAccess,
+          labels: requestedLabels,
+        },
+        platform,
+      ),
+    ).resolves.toEqual({ kind: 'conflict', connectionId: summary.id });
+  });
+
+  it('returns a conflict when the database operation is incompatible', async () => {
+    const createAccess = { scope: 'database', operation: 'create', database: 'orders' } as const;
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({
+        items: [{ ...summary, labels: requestedLabels }],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      }),
+      getConnection: vi
+        .fn()
+        .mockResolvedValue(candidate(summary.id, requestedMetadata(createAccess), requestedLabels)),
     } as unknown as RPCCaller;
 
     await expect(

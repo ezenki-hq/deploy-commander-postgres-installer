@@ -45,7 +45,8 @@ describe('postgres access plans', () => {
     ).services?.['postgres-admin'];
     const script = service?.command?.[2] ?? '';
 
-    expect(script).toContain('1 / 0');
+    expect(script).toContain('POSTGRES_MANAGER_ERROR: database-collision');
+    expect(script).not.toContain('1 / 0');
     expect(script).not.toContain('ALTER DATABASE %I OWNER');
     expect(script).toContain('CREATE DATABASE %I OWNER %I');
   });

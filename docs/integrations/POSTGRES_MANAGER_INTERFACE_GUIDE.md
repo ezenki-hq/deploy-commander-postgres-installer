@@ -159,13 +159,15 @@ resource. A request identity includes:
 - the trusted calling-manager ID;
 - the PostgreSQL resource ID;
 - database versus full scope;
-- the database operation and name for database scope; and
+- the database name for database scope; and
 - the `superuser` choice for full scope.
 
-Caller labels are also part of the exact connection lookup. Unrelated connections remain
-available. If exactly one connection matches the complete identity and labels, that
-connection is returned. If multiple exact matches exist, or a matching access identity
-has different labels, the request fails with a conflict instead of selecting arbitrarily.
+The database `operation` (`create` versus `existing`) and caller labels are compatibility
+checks on that identity, not additional identity dimensions. Unrelated connections remain
+available. If exactly one connection matches the identity and compatibility checks, that
+connection is returned. If multiple exact matches exist, or a matching identity has a
+different operation or labels, the request fails with a conflict instead of selecting
+arbitrarily.
 
 The calling manager and resource are derived from Deploy Commander, not request metadata.
 Do not use a connection name as a user-facing identity: the runner-only plan name

@@ -76,14 +76,22 @@ WHERE n.nspname NOT LIKE 'pg_%'
 \gexec`;
 
 const createDatabaseScript = String.raw`${readiness}
+if ! database_exists=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 2>/dev/null <<'SQL'
+\getenv target_database TARGET_DATABASE
+SELECT 1 FROM pg_database WHERE datname = :'target_database';
+SQL
+); then
+  echo "PostgreSQL database collision check failed" >&2
+  exit 1
+fi
+if [ "$database_exists" = "1" ]; then
+  echo "POSTGRES_MANAGER_ERROR: database-collision" >&2
+  exit 45
+fi
 if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 \getenv target_password TARGET_PASSWORD
-SELECT CASE
-  WHEN EXISTS (SELECT 1 FROM pg_database WHERE datname = :'target_database') THEN 1 / 0
-  ELSE 1
-END;
 SELECT format('CREATE ROLE %I', :'target_username')
 \gexec
 SELECT format(
@@ -108,17 +116,23 @@ SQL
 ${psqlFailure('PostgreSQL database privilege setup failed')}`;
 
 const existingDatabaseScript = String.raw`${readiness}
+if ! database_exists=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 2>/dev/null <<'SQL'
+\getenv target_database TARGET_DATABASE
+SELECT 1 FROM pg_database
+WHERE datname = :'target_database' AND datistemplate = false;
+SQL
+); then
+  echo "PostgreSQL existing database check failed" >&2
+  exit 1
+fi
+if [ "$database_exists" != "1" ]; then
+  echo "POSTGRES_MANAGER_ERROR: database-not-found" >&2
+  exit 44
+fi
 if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 \getenv target_password TARGET_PASSWORD
-SELECT CASE
-  WHEN EXISTS (
-    SELECT 1 FROM pg_database
-    WHERE datname = :'target_database' AND datistemplate = false
-  ) THEN 1
-  ELSE 1 / 0
-END;
 SELECT format('CREATE ROLE %I', :'target_username')
 \gexec
 SELECT format(

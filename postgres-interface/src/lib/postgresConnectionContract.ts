@@ -87,6 +87,14 @@ function accessEqual(left: AccessRequest, right: AccessRequest): boolean {
   return left.scope === 'full' && right.scope === 'full' && left.superuser === right.superuser;
 }
 
+function accessIdentityEqual(left: AccessRequest, right: AccessRequest): boolean {
+  if (left.scope !== right.scope) return false;
+  if (left.scope === 'database' && right.scope === 'database') {
+    return left.database === right.database;
+  }
+  return left.scope === 'full' && right.scope === 'full' && left.superuser === right.superuser;
+}
+
 function parseLabels(value: unknown): Record<string, string> {
   if (value === undefined) return {};
   if (!isRecord(value)) throw invalidConnection();
@@ -374,11 +382,14 @@ export async function findExistingConnection(
     const candidateLabels = parseLabels(normalized.connection.labels);
     if (!sameLabels(summaryLabels, candidateLabels)) throw invalidConnection();
     const metadata = normalized.config.metadata as UnknownRecord;
-    if (!access || !validAccess(metadata.access) || !accessEqual(metadata.access, access)) {
+    if (!access || !validAccess(metadata.access) || !accessIdentityEqual(metadata.access, access)) {
       continue;
     }
     identityMatches += 1;
-    if (sameLabels(candidateLabels, expected.labels ?? {})) {
+    if (
+      accessEqual(metadata.access, access) &&
+      sameLabels(candidateLabels, expected.labels ?? {})
+    ) {
       match = normalized;
     } else {
       conflictId = summary.id;
