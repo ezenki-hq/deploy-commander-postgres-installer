@@ -32,6 +32,23 @@ const USERNAME_PATTERN = /^dc_user_[0-9a-f]{32}$/;
 const DATABASE_LIMIT = 63;
 type UnknownRecord = Record<string, unknown>;
 
+export interface PublishedConnectionIdentity {
+  managerId: string;
+  resourceId: string;
+  access: AccessRequest;
+  username: string;
+  password: string;
+  labels?: Record<string, string>;
+}
+
+export interface LegacyPublishedConnectionIdentity {
+  managerId: string;
+  resourceId: string;
+  database: string;
+  username: string;
+  password?: string;
+}
+
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -101,7 +118,12 @@ function parseLabels(value: unknown): Record<string, string> {
   const labels: Record<string, string> = {};
   for (const [key, label] of Object.entries(value)) {
     if (key.trim().length === 0 || typeof label !== 'string') throw invalidConnection();
-    labels[key] = label;
+    Object.defineProperty(labels, key, {
+      configurable: true,
+      enumerable: true,
+      value: label,
+      writable: true,
+    });
   }
   return labels;
 }
@@ -271,6 +293,158 @@ function normalizeConnection(
       },
     },
   } as unknown as RPC.CreateConnection;
+}
+
+async function listConnectionSummaries(
+  caller: RPCCaller,
+  expected: ExpectedConnectionIdentity,
+  filterLabels?: Record<string, string>,
+): Promise<RPC.ConnectionItem[]> {
+  const summaries: RPC.ConnectionItem[] = [];
+  const seen = new Set<string>();
+  let offset = 0;
+  let total = 0;
+  let firstPage = true;
+  while (firstPage || offset < total) {
+    let response: unknown;
+    try {
+      response = await caller.getConnections({
+        manager: expected.managerId,
+        resource: expected.resourceId,
+        ...(filterLabels ? { labels: filterLabels, label_match: 'all' as const } : {}),
+        include_labels: true,
+        limit: PAGE_LIMIT,
+        offset,
+      });
+    } catch {
+      throw new Error('PostgreSQL connection lookup failed');
+    }
+    const page = validatePage(response, offset);
+    if (firstPage) {
+      total = page.total;
+      firstPage = false;
+    } else if (page.total !== total) {
+      throw invalidConnection();
+    }
+    for (const item of page.items) {
+      if (!validateSummary(item, expected) || seen.has(item.id)) throw invalidConnection();
+      parseLabels(item.labels);
+      seen.add(item.id);
+      summaries.push(item);
+    }
+    offset += page.items.length;
+    if (page.items.length === 0 && total === 0) break;
+  }
+  return summaries;
+}
+
+async function readConnection(
+  caller: RPCCaller,
+  summary: RPC.ConnectionItem,
+  expected: ExpectedConnectionIdentity,
+  platform: PlatformConnection,
+  options: { requireAccess?: boolean } = {},
+): Promise<RPC.CreateConnection> {
+  let full: unknown;
+  try {
+    full = await caller.getConnection(summary.id, { include_labels: true });
+  } catch {
+    throw new Error('PostgreSQL connection lookup failed');
+  }
+  const normalized = normalizeConnection(
+    full,
+    { ...expected, connectionId: summary.id },
+    platform,
+    options,
+  );
+  if (!sameLabels(parseLabels(summary.labels), parseLabels(normalized.connection.labels))) {
+    throw invalidConnection();
+  }
+  return normalized;
+}
+
+/** Reconcile a terminal runner outcome against the exact credentials it was meant to publish. */
+export async function findPublishedConnection(
+  caller: RPCCaller,
+  identity: PublishedConnectionIdentity,
+  platform: PlatformConnection,
+): Promise<ConnectionLookupResult> {
+  if (!normalizeExpected({ managerId: identity.managerId, resourceId: identity.resourceId }))
+    throw invalidConnection();
+  if (!USERNAME_PATTERN.test(identity.username) || !nonBlank(identity.password))
+    throw invalidConnection();
+  const summaries = await listConnectionSummaries(caller, {
+    managerId: identity.managerId,
+    resourceId: identity.resourceId,
+  });
+  let match: RPC.CreateConnection | undefined;
+  let conflictId: string | undefined;
+  for (const summary of summaries) {
+    const connection = await readConnection(
+      caller,
+      summary,
+      { managerId: identity.managerId, resourceId: identity.resourceId },
+      platform,
+      { requireAccess: true },
+    );
+    const metadata = connection.config.metadata as unknown as UnknownRecord;
+    if (!validAccess(metadata.access) || !accessIdentityEqual(metadata.access, identity.access))
+      continue;
+    const labelsMatch =
+      identity.labels === undefined ||
+      sameLabels(parseLabels(connection.connection.labels), identity.labels);
+    if (
+      metadata.username === identity.username &&
+      metadata.password === identity.password &&
+      labelsMatch
+    ) {
+      if (match) throw invalidConnection();
+      match = connection;
+    } else {
+      conflictId = summary.id;
+    }
+  }
+  if (match) return { kind: 'match', connection: match };
+  if (conflictId) return { kind: 'conflict', connectionId: conflictId };
+  return { kind: 'none' };
+}
+
+/** Reconcile a legacy v1 connection, which predates labels and access metadata. */
+export async function findLegacyPublishedConnection(
+  caller: RPCCaller,
+  identity: LegacyPublishedConnectionIdentity,
+  platform: PlatformConnection,
+): Promise<ConnectionLookupResult> {
+  if (!normalizeExpected({ managerId: identity.managerId, resourceId: identity.resourceId }))
+    throw invalidConnection();
+  if (!validDatabase(identity.database) || !USERNAME_PATTERN.test(identity.username))
+    throw invalidConnection();
+  const summaries = await listConnectionSummaries(caller, {
+    managerId: identity.managerId,
+    resourceId: identity.resourceId,
+  });
+  let match: RPC.CreateConnection | undefined;
+  let conflictId: string | undefined;
+  for (const summary of summaries) {
+    const connection = await readConnection(
+      caller,
+      summary,
+      { managerId: identity.managerId, resourceId: identity.resourceId },
+      platform,
+    );
+    const metadata = connection.config.metadata as unknown as UnknownRecord;
+    if (metadata.database !== identity.database || metadata.username !== identity.username)
+      continue;
+    if (identity.password !== undefined && metadata.password !== identity.password) {
+      conflictId = summary.id;
+      continue;
+    }
+    if (match) throw invalidConnection();
+    match = connection;
+  }
+  if (match) return { kind: 'match', connection: match };
+  if (conflictId) return { kind: 'conflict', connectionId: conflictId };
+  return { kind: 'none' };
 }
 
 export function normalizePostgresConnection(

@@ -1,6 +1,11 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
-import { CATALOG_DELETE_QUERY, CATALOG_UPSERT_QUERY, catalogRecordId } from './postgresCatalog';
+import {
+  CATALOG_DELETE_QUERY,
+  CATALOG_MARK_CLEANUP_QUERY,
+  CATALOG_UPSERT_QUERY,
+  catalogRecordId,
+} from './postgresCatalog';
 import { connectionLabels, type AccessRequest } from './postgresConnectionRequest';
 import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
 
@@ -26,6 +31,8 @@ export interface ProvisionRunRecord {
     username: string;
     password: string;
   };
+  /** The note protocol used to create this run. */
+  version: 'v1' | 'v2';
 }
 export interface CleanupRunRecord {
   identity: ConnectionOperationIdentity;
@@ -36,6 +43,10 @@ export interface CleanupRunRecord {
   labels: Record<string, string>;
   /** @deprecated v1 workflow compatibility. */ database: string;
   /** @deprecated v1 workflow compatibility. */ username: string;
+  /** The note protocol used to create this run. */
+  version: 'v1' | 'v2';
+  /** Managed catalog owner, when cleanup metadata carries one. */
+  catalogOperationId?: string;
 }
 export type ConnectionNote = ({ kind: 'provision' } | { kind: 'cleanup' }) &
   ConnectionOperationIdentity;
@@ -225,6 +236,14 @@ function labelsOf(value: unknown): Record<string, string> {
   }
   return labels;
 }
+function setLabel(labels: Record<string, string>, key: string, value: string): void {
+  Object.defineProperty(labels, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
 function sameLabels(left: Record<string, string>, right: Record<string, string>): boolean {
   const keys = Object.keys(left);
   return keys.length === Object.keys(right).length && keys.every((key) => right[key] === left[key]);
@@ -278,7 +297,8 @@ function connectionEntry(
   const labels = labelsOf(entry.labels);
   const callerLabels: Record<string, string> = {};
   for (const [key, value] of Object.entries(labels))
-    if (key !== 'postgres.access' && key !== 'postgres.database') callerLabels[key] = value;
+    if (key !== 'postgres.access' && key !== 'postgres.database')
+      setLabel(callerLabels, key, value);
   if (!sameLabels(labels, connectionLabels(access, callerLabels))) throw recovery();
   return {
     access,
@@ -314,7 +334,9 @@ function validateProvisionHook(
     bindings.resource_id !== resourceId ||
     bindings.name !== access.database ||
     bindings.origin !== (access.operation === 'create' ? 'managed' : 'pre-existing') ||
-    Object.keys(bindings).length !== 4
+    (bindings.operation_id !== undefined &&
+      (typeof bindings.operation_id !== 'string' || !OPERATION_ID.test(bindings.operation_id))) ||
+    (Object.keys(bindings).length !== 4 && Object.keys(bindings).length !== 5)
   )
     throw recovery();
 }
@@ -335,10 +357,15 @@ function validateCleanupHook(
     hook.name !== 'postgres-admin' ||
     !isRecord(hook.remove) ||
     !isRecord(hook.remove.after) ||
-    hook.remove.after.query !== CATALOG_DELETE_QUERY ||
+    (hook.remove.after.query !== CATALOG_DELETE_QUERY &&
+      hook.remove.after.query !== CATALOG_MARK_CLEANUP_QUERY) ||
     !isRecord(hook.remove.after.bindings) ||
     hook.remove.after.bindings.record_id !== catalogRecordId(resourceId, access.database) ||
-    Object.keys(hook.remove.after.bindings).length !== 1
+    (hook.remove.after.query === CATALOG_MARK_CLEANUP_QUERY &&
+      (typeof hook.remove.after.bindings.operation_id !== 'string' ||
+        !OPERATION_ID.test(hook.remove.after.bindings.operation_id))) ||
+    Object.keys(hook.remove.after.bindings).length !==
+      (hook.remove.after.query === CATALOG_MARK_CLEANUP_QUERY ? 2 : 1)
   )
     throw recovery();
 }
@@ -355,6 +382,10 @@ function provisionRecord(base: Omit<ProvisionRunRecord, 'logical'>): ProvisionRu
     },
     enumerable: false,
   });
+  Object.defineProperty(result, 'version', {
+    value: base.version,
+    enumerable: false,
+  });
   return result;
 }
 function cleanupRecord(base: Omit<CleanupRunRecord, 'database' | 'username'>): CleanupRunRecord {
@@ -365,6 +396,10 @@ function cleanupRecord(base: Omit<CleanupRunRecord, 'database' | 'username'>): C
       enumerable: false,
     },
     username: { value: base.login.username, enumerable: false },
+  });
+  Object.defineProperty(result, 'version', {
+    value: base.version,
+    enumerable: false,
   });
   return result;
 }
@@ -394,7 +429,13 @@ export function parseProvisionRun(value: unknown): ProvisionRunRecord {
   const target = readTarget(service.environment);
   if (parsed.noteText.startsWith('postgres-provision:v1:')) {
     const legacy = legacyRecord(parsed, target, true);
-    return provisionRecord({ identity, runId: parsed.run.id, status: parsed.status, ...legacy });
+    return provisionRecord({
+      identity,
+      runId: parsed.run.id,
+      status: parsed.status,
+      version: 'v1',
+      ...legacy,
+    });
   }
   const connection = connectionEntry(metadata, identity);
   if (
@@ -415,6 +456,7 @@ export function parseProvisionRun(value: unknown): ProvisionRunRecord {
     identity,
     runId: parsed.run.id,
     status: parsed.status,
+    version: 'v2',
     access: connection.access,
     login: connection.login,
     labels: connection.labels,
@@ -430,7 +472,13 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
   const target = readTarget(service.environment);
   if (parsed.noteText.startsWith('postgres-cleanup:v1:')) {
     const legacy = legacyRecord(parsed, target, false);
-    return cleanupRecord({ identity, runId: parsed.run.id, status: parsed.status, ...legacy });
+    return cleanupRecord({
+      identity,
+      runId: parsed.run.id,
+      status: parsed.status,
+      version: 'v1',
+      ...legacy,
+    });
   }
   validateAdminEnvironment(service.environment);
   if (!Array.isArray(service.connections) || service.connections.length !== 1) throw recovery();
@@ -454,9 +502,20 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     identity,
     runId: parsed.run.id,
     status: parsed.status,
+    version: 'v2',
     access,
     login: { username: target.username, password: target.password },
     labels: connectionLabels(access, {}),
+    ...(access.scope === 'database' &&
+    access.operation === 'create' &&
+    Array.isArray(metadata.object_hooks) &&
+    isRecord(metadata.object_hooks[0]) &&
+    isRecord(metadata.object_hooks[0].remove) &&
+    isRecord(metadata.object_hooks[0].remove.after) &&
+    isRecord(metadata.object_hooks[0].remove.after.bindings) &&
+    typeof metadata.object_hooks[0].remove.after.bindings.operation_id === 'string'
+      ? { catalogOperationId: metadata.object_hooks[0].remove.after.bindings.operation_id }
+      : {}),
   });
 }
 

@@ -177,6 +177,8 @@ export interface CleanupPlanInput {
   access: AccessRequest;
   resourceId: string;
   platform: PlatformConnection;
+  /** Provision operation that owns the managed catalog row, when applicable. */
+  catalogOperationId?: string;
 }
 
 /**
@@ -205,7 +207,11 @@ export function buildCleanupPlan(
       input.login,
       input.platform,
     );
-    const catalogHook = buildCatalogDeleteHook(input.access, input.resourceId);
+    const catalogHook = buildCatalogDeleteHook(
+      input.access,
+      input.resourceId,
+      input.catalogOperationId,
+    );
     return catalogHook ? { ...service, object_hooks: [catalogHook] } : service;
   }
 
@@ -291,6 +297,7 @@ export interface ConnectionRunPlanInput {
   resourceId: string;
   platform: PlatformConnection;
   callerLabels: Record<string, string>;
+  operationId?: string;
 }
 
 /** Assemble the complete runner metadata for one approved connection. */
@@ -302,7 +309,7 @@ export function buildConnectionRunPlan(input: ConnectionRunPlanInput): RunnerMet
     input.platform,
   );
   const metadata = buildConnectionMetadata(input.login, input.access, input.platform);
-  const hook = buildCatalogHook(input.access, input.resourceId);
+  const hook = buildCatalogHook(input.access, input.resourceId, input.operationId);
   return {
     ...service,
     connections: {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { RPCCaller, RPC, Wire, Events } from '@ezenki/deploy-commander-installer-interface';
 import App from './App';
 import { createRunEventSource } from './lib/runMonitor';
@@ -145,6 +145,95 @@ describe('run-backed App boot', () => {
       ).toBeInTheDocument(),
     );
     expect(getRuns).toHaveBeenCalledTimes(2);
+  });
+  it('keeps an approved child workflow stable across run events', async () => {
+    const connection = {
+      connection: {
+        id: 'connection-1',
+        manager: 'caller-manager',
+        resource: resource.id,
+        external: false,
+        created_at: 'now',
+        updated_at: 'now',
+        labels: { team: 'payments', 'postgres.access': 'database', 'postgres.database': 'orders' },
+      },
+      config: {
+        id: 'connection-1',
+        manager: 'caller-manager',
+        resource: resource.id,
+        metadata: {
+          host: 'postgres',
+          port: 5432,
+          database: 'orders',
+          username: 'dc_user_0123456789abcdef0123456789abcdef',
+          password: 'secret',
+          platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
+          access: { scope: 'database', operation: 'create', database: 'orders' },
+        },
+      },
+    };
+    const current = fixture(
+      {
+        getMyResources: vi
+          .fn()
+          .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+        getResource: vi.fn().mockResolvedValue({
+          resource,
+          config: {
+            id: resource.id,
+            manager: resource.manager,
+            agent: 'agent',
+            resource_type: 'postgres',
+            name: 'postgres',
+            metadata: {
+              engine: 'postgres',
+              version: '15',
+              administrator: {
+                username: 'dc_admin_0123456789abcdef0123456789abcdef',
+                password: 'secret',
+              },
+            },
+            platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
+          },
+        }),
+        databaseQuery: vi.fn().mockResolvedValue({ results: [{ status: 'OK', result: [] }] }),
+        getConnections: vi
+          .fn()
+          .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+          .mockResolvedValue({ items: [connection.connection], limit: 50, offset: 0, total: 1 }),
+        getConnection: vi.fn().mockResolvedValue(connection),
+        start: vi.fn().mockResolvedValue({ id: 'connection-run' }),
+        getRun: vi.fn().mockResolvedValue({ run: { id: 'connection-run', status: 2 } }),
+      },
+      {
+        action: 'create-connection',
+        scope: 'database',
+        operation: 'create',
+        database: 'orders',
+        labels: { team: 'payments' },
+      },
+    );
+    render(<App createClient={current.factory} />);
+    await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' });
+    fireEvent.click(screen.getByRole('button', { name: 'Approve connection' }));
+    await waitFor(() => expect(current.caller.start).toHaveBeenCalledTimes(1));
+
+    const startEvent = {
+      eventType: 'run-start',
+      event: 'event',
+      data: { type: 'event', payload: { id: 'connection-run', status: 1 } },
+    } as never;
+    current.publish(startEvent);
+    current.client.events.publish({
+      eventType: 'run-update',
+      event: 'event',
+      data: { type: 'event', payload: { id: 'connection-run', status: 2 } },
+    } as never);
+    await waitFor(() =>
+      expect(current.wire.close).toHaveBeenCalledWith(expect.objectContaining({ ok: true })),
+    );
+    expect(current.caller.getMetadata).toHaveBeenCalledTimes(1);
+    expect(current.caller.start).toHaveBeenCalledTimes(1);
   });
   it('marks an installed run with no resource as contradiction attention', async () => {
     const current = fixture({

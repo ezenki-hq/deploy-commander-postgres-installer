@@ -79,6 +79,9 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
   const [client, setClient] = useState<AppClient | null>(null);
   const clientGeneration = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
+  // Connection requests are child workflows.  Their metadata and effect must
+  // remain stable while the host refreshes dashboard state for run events.
+  const connectionViewRef = useRef<ConnectionView | null>(null);
 
   useEffect(() => {
     const generation = ++clientGeneration.current;
@@ -91,6 +94,7 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       clientFactoryRef.current = createClient;
     }
     const stableClient = clientRef.current;
+    connectionViewRef.current = null;
     const cleanupGeneration = generation;
     queueMicrotask(() => {
       if (clientGeneration.current === cleanupGeneration) setClient(stableClient);
@@ -110,6 +114,10 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
 
   useEffect(() => {
     if (!client) return undefined;
+    if (connectionViewRef.current) {
+      setView(connectionViewRef.current);
+      return undefined;
+    }
     let live = true;
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -120,21 +128,25 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       if (isConnectionRequestMetadata(metadata)) {
         const caller = managerId(await client.caller.getCallingManager().catch(() => null));
         try {
-          return {
+          const next: ConnectionView = {
             kind: 'connection',
             manager,
             callerId: caller,
             metadata: parseConnectionRequest(metadata),
             error: caller ? null : 'A calling manager is required',
           };
+          connectionViewRef.current = next;
+          return next;
         } catch {
-          return {
+          const next: ConnectionView = {
             kind: 'connection',
             manager,
             callerId: caller,
             metadata: EMPTY_CONNECTION_REQUEST,
             error: 'Invalid PostgreSQL connection request',
           };
+          connectionViewRef.current = next;
+          return next;
         }
       }
       const [{ lifecycle }, resources] = await Promise.all([

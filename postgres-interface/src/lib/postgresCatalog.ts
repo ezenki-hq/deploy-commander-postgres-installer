@@ -8,18 +8,32 @@ DEFINE TABLE IF NOT EXISTS postgres_database SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS resource_id ON TABLE postgres_database TYPE string;
 DEFINE FIELD IF NOT EXISTS name ON TABLE postgres_database TYPE string;
 DEFINE FIELD IF NOT EXISTS origin ON TABLE postgres_database TYPE string;
+DEFINE FIELD IF NOT EXISTS operation_id ON TABLE postgres_database TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS cleanup_requested ON TABLE postgres_database TYPE bool DEFAULT false;
 DEFINE FIELD IF NOT EXISTS updated_at ON TABLE postgres_database TYPE datetime;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE postgres_database TYPE datetime DEFAULT time::now();
 DEFINE INDEX IF NOT EXISTS postgres_database_resource_name ON TABLE postgres_database COLUMNS resource_id, name UNIQUE;
 UPSERT type::thing('postgres_database', $record_id)
 SET resource_id = $resource_id,
     name = $name,
     origin = IF origin = 'managed' THEN 'managed' ELSE $origin END,
+    operation_id = IF origin = 'managed' THEN operation_id ELSE $operation_id END,
+    cleanup_requested = false,
     updated_at = time::now();
 COMMIT TRANSACTION;`;
 
 /** Delete is restricted to the deterministic record for a managed database. */
 export const CATALOG_DELETE_QUERY = String.raw`DELETE type::thing('postgres_database', $record_id)
 WHERE origin = 'managed';`;
+
+/** Mark an owned catalog row as cleanup-observed; deletion is manager-confirmed after a successful run. */
+export const CATALOG_MARK_CLEANUP_QUERY = String.raw`UPDATE type::thing('postgres_database', $record_id)
+SET cleanup_requested = true
+WHERE origin = 'managed' AND operation_id = $operation_id;`;
+
+/** Delete only the row owned by this provisioning operation after confirmed DB cleanup. */
+export const CATALOG_DELETE_OWNED_QUERY = String.raw`DELETE type::thing('postgres_database', $record_id)
+WHERE origin = 'managed' AND operation_id = $operation_id AND cleanup_requested = true;`;
 
 export const CATALOG_LIST_QUERY =
   'SELECT name FROM postgres_database WHERE resource_id = $resource_id ORDER BY name';
@@ -55,6 +69,7 @@ function query(
   resourceId: string,
   database: string,
   origin: CatalogOrigin,
+  operationId?: string,
 ): DatabaseQuery {
   return {
     query: sql,
@@ -63,6 +78,7 @@ function query(
       resource_id: resourceId,
       name: database,
       origin,
+      ...(operationId !== undefined ? { operation_id: operationId } : {}),
     },
   };
 }
@@ -75,6 +91,7 @@ function query(
 export function buildCatalogHook(
   access: AccessRequest,
   resourceId: string,
+  operationId?: string,
 ): ObjectHooks | undefined {
   if (access.scope !== 'database') return undefined;
   return {
@@ -86,6 +103,7 @@ export function buildCatalogHook(
         resourceId,
         access.database,
         access.operation === 'create' ? 'managed' : 'pre-existing',
+        operationId,
       ),
     },
   };
@@ -95,6 +113,7 @@ export function buildCatalogHook(
 export function buildCatalogDeleteHook(
   access: AccessRequest,
   resourceId: string,
+  operationId?: string,
 ): ObjectHooks | undefined {
   if (access.scope !== 'database' || access.operation !== 'create') return undefined;
   return {
@@ -102,13 +121,41 @@ export function buildCatalogDeleteHook(
     name: 'postgres-admin',
     remove: {
       after: {
-        query: CATALOG_DELETE_QUERY,
-        bindings: {
-          record_id: catalogRecordId(resourceId, access.database),
-        },
+        query: operationId ? CATALOG_MARK_CLEANUP_QUERY : CATALOG_DELETE_QUERY,
+        bindings: operationId
+          ? { record_id: catalogRecordId(resourceId, access.database), operation_id: operationId }
+          : { record_id: catalogRecordId(resourceId, access.database) },
       },
     },
   };
+}
+
+function validateMutationResponse(response: unknown): void {
+  if (!isRecord(response) || !Array.isArray(response.results) || response.results.length === 0)
+    throw invalidCatalog();
+  for (const statement of response.results) {
+    if (!isRecord(statement) || statement.status !== 'OK') throw invalidCatalog();
+  }
+}
+
+/** Remove an owned catalog row only after the runner reported successful cleanup. */
+export async function confirmCatalogCleanup(
+  caller: Pick<RPCCaller, 'databaseQuery'>,
+  resourceId: string,
+  database: string,
+  operationId: string,
+): Promise<void> {
+  if (!databaseName(database) || operationId.trim().length === 0) throw invalidCatalog();
+  let response: unknown;
+  try {
+    response = await caller.databaseQuery(CATALOG_DELETE_OWNED_QUERY, {
+      record_id: catalogRecordId(resourceId, database),
+      operation_id: operationId,
+    });
+  } catch {
+    throw invalidCatalog();
+  }
+  validateMutationResponse(response);
 }
 
 function invalidCatalog(): Error {

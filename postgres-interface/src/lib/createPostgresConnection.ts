@@ -6,7 +6,12 @@ import {
   type AdminCredentials,
   type LoginCredentials,
 } from './credentials';
-import { findExistingConnection, type ConnectionLookupResult } from './postgresConnectionContract';
+import {
+  findExistingConnection,
+  findLegacyPublishedConnection,
+  findPublishedConnection,
+  type ConnectionLookupResult,
+} from './postgresConnectionContract';
 import {
   listPostgresResources,
   readPostgresInstallation,
@@ -23,9 +28,13 @@ import {
   type ProvisionRunRecord,
 } from './connectionRuns';
 import { RunFailedError, waitForRun, type RunEventSource } from './runMonitor';
-import { PostgresRecoveryRequiredError, PostgresRequestError } from './postgresErrors';
+import {
+  OperationBusyError,
+  PostgresRecoveryRequiredError,
+  PostgresRequestError,
+} from './postgresErrors';
 import { buildInstallPlan } from './installPlan';
-import { listCatalogDatabases } from './postgresCatalog';
+import { confirmCatalogCleanup, listCatalogDatabases } from './postgresCatalog';
 import {
   connectionLabels,
   type AccessRequest,
@@ -282,24 +291,66 @@ async function lookup(
   );
 }
 
+async function lookupPublished(
+  deps: ConnectionWorkflowDeps,
+  installation: PostgresInstallation,
+  provision: ProvisionRunRecord,
+): Promise<ConnectionLookupResult> {
+  if (provision.version === 'v1') {
+    if (provision.access.scope !== 'database') throw recovery();
+    return findLegacyPublishedConnection(
+      deps.caller,
+      {
+        managerId: provision.identity.callerId,
+        resourceId: installation.resource.id,
+        database: provision.access.database,
+        username: provision.login.username,
+        password: provision.login.password || undefined,
+      },
+      installation.platform,
+    );
+  }
+  return findPublishedConnection(
+    deps.caller,
+    {
+      managerId: provision.identity.callerId,
+      resourceId: installation.resource.id,
+      access: provision.access,
+      username: provision.login.username,
+      password: provision.login.password,
+      labels: provision.labels,
+    },
+    installation.platform,
+  );
+}
+
 async function cleanupRetry(
   deps: ConnectionWorkflowDeps,
   installation: PostgresInstallation,
   identity: ConnectionOperationIdentity,
   access: AccessRequest,
   login: LoginCredentials,
+  options: { legacy?: boolean; catalogOperationId?: string } = {},
 ): Promise<void> {
   const fresh = { ...identity, operationId: operationId() };
   const runId = await start(
     deps,
     'cleanup-connection',
-    buildCleanupPlan({
-      administrator: installation.credentials,
-      login,
-      access,
-      resourceId: installation.resource.id,
-      platform: installation.platform,
-    }),
+    options.legacy
+      ? buildCleanupPlan(
+          installation.credentials,
+          access.scope === 'database' ? access.database : 'postgres',
+          login.username,
+          installation.platform,
+        )
+      : buildCleanupPlan({
+          administrator: installation.credentials,
+          login,
+          access,
+          resourceId: installation.resource.id,
+          platform: installation.platform,
+          catalogOperationId: options.catalogOperationId ?? identity.operationId,
+        }),
     makeCleanupNote(fresh),
   );
   try {
@@ -307,6 +358,14 @@ async function cleanupRetry(
   } catch (error) {
     if (isAbort(error)) throw error;
     throw new Error(CLEANUP_ERROR);
+  }
+  if (!options.legacy && access.scope === 'database' && access.operation === 'create') {
+    await confirmCatalogCleanup(
+      deps.caller,
+      installation.resource.id,
+      access.database,
+      options.catalogOperationId ?? identity.operationId,
+    );
   }
 }
 
@@ -324,7 +383,7 @@ async function reconcileProvision(
     return { kind: 'retry' };
   }
   if (expectedAccess && !accessEqual(expectedAccess, provision.access)) return { kind: 'retry' };
-  if (expectedLabels) {
+  if (expectedLabels && provision.version !== 'v1') {
     const actualLabels = Object.fromEntries(
       Object.entries(provision.labels).filter(
         ([key]) => key !== 'postgres.access' && key !== 'postgres.database',
@@ -338,27 +397,89 @@ async function reconcileProvision(
       return { kind: 'retry' };
     }
   }
-  const callerLabels = Object.fromEntries(
-    Object.entries(provision.labels).filter(
-      ([key]) => key !== 'postgres.access' && key !== 'postgres.database',
-    ),
-  );
-  const found = await lookup(
-    deps,
-    installation,
-    provision.identity.callerId,
-    provision.access,
-    callerLabels,
-  );
-  if (found.kind === 'match') return { kind: 'connection', value: found.connection };
-  if (found.kind === 'conflict') {
-    await cleanupRetry(deps, installation, provision.identity, provision.access, provision.login);
-    throw new PostgresRequestError(409, 'A PostgreSQL connection already exists for this request');
-  }
-  if (runStatus === 3 || runStatus === 2) {
-    await cleanupRetry(deps, installation, provision.identity, provision.access, provision.login);
+  // The v1 connection contract has no labels or access discriminator.  Use
+  // the persisted database/login to preserve a published legacy connection.
+  const published = await lookupPublished(deps, installation, provision);
+  if (published.kind === 'match') return { kind: 'connection', value: published.connection };
+  if (published.kind === 'conflict') throw recovery();
+  if (runStatus === 2) throw recovery();
+  if (runStatus === 3) {
+    await cleanupRetry(deps, installation, provision.identity, provision.access, provision.login, {
+      legacy: provision.version === 'v1',
+      catalogOperationId: provision.identity.operationId,
+    });
   }
   return { kind: 'retry' };
+}
+
+async function reconcileFailedWait(
+  deps: ConnectionWorkflowDeps,
+  runId: string,
+  installation: PostgresInstallation,
+  identity: ConnectionOperationIdentity,
+  access: AccessRequest,
+  login: LoginCredentials,
+  labels: Record<string, string>,
+  originalError: unknown,
+): Promise<RPC.CreateConnection | null> {
+  let exact: RPC.GetRun;
+  try {
+    exact = await readExactRun(deps.caller, runId);
+  } catch {
+    // Older host test doubles predate getRun on the caller.  The production
+    // interface always exposes it; retain the v1 failure fallback only for
+    // that explicitly absent method, never for an uncertain transport read.
+    if (originalError instanceof RunFailedError && typeof deps.caller.getRun !== 'function') {
+      const failureStatus = await databaseFailureStatus(deps.caller, runId, access, originalError);
+      await cleanupRetry(deps, installation, identity, access, login);
+      if (failureStatus !== null) {
+        throw new PostgresRequestError(
+          failureStatus,
+          failureStatus === 404
+            ? 'Requested PostgreSQL database was not found'
+            : 'Requested PostgreSQL database already exists',
+        );
+      }
+      throw new Error(RUN_ERROR);
+    }
+    // The terminal state is unknown.  Never compensate an operation that may
+    // still be active or may already have published a connection.
+    throw recovery();
+  }
+  const terminalStatus = status(exact.run.status);
+  if (terminalStatus === null || terminalStatus < 2) throw recovery();
+  const provision = parseProvisionRun(exact);
+  if (
+    provision.identity.operationId !== identity.operationId ||
+    !accessEqual(provision.access, access) ||
+    provision.login.username !== login.username ||
+    provision.login.password !== login.password
+  )
+    throw recovery();
+  const reconciled = await reconcileProvision(
+    deps,
+    provision,
+    identity.callerId,
+    access,
+    Object.fromEntries(
+      Object.entries(labels).filter(
+        ([key]) => key !== 'postgres.access' && key !== 'postgres.database',
+      ),
+    ),
+    terminalStatus,
+  );
+  if (reconciled.kind === 'connection') return reconciled.value;
+  if (terminalStatus !== 3) throw recovery();
+  const failureStatus = await databaseFailureStatus(deps.caller, runId, access, originalError);
+  if (failureStatus !== null) {
+    throw new PostgresRequestError(
+      failureStatus,
+      failureStatus === 404
+        ? 'Requested PostgreSQL database was not found'
+        : 'Requested PostgreSQL database already exists',
+    );
+  }
+  throw new Error(RUN_ERROR);
 }
 
 export type ConnectionRecoveryResult =
@@ -393,7 +514,10 @@ export async function reconcileLatestConnectionRun(
     if (runStatus === 2) return { kind: 'retry' };
     const installation = await resources(deps.caller);
     if (!installation) throw recovery();
-    await cleanupRetry(deps, installation, cleanup.identity, cleanup.access, cleanup.login);
+    await cleanupRetry(deps, installation, cleanup.identity, cleanup.access, cleanup.login, {
+      legacy: cleanup.version === 'v1',
+      catalogOperationId: cleanup.catalogOperationId ?? cleanup.identity.operationId,
+    });
     return { kind: 'retry' };
   }
   const provision = parseProvisionRun(exact);
@@ -425,6 +549,8 @@ export async function createPostgresConnection(
   let latest: RPC.RunItem | null = null;
   if (!installation) {
     latest = await readLatestRun(deps.caller);
+    if (latest && (latest.action === 'create' || latest.action === 'teardown') && latest.status < 2)
+      throw new OperationBusyError();
     if (latest && (latest.action !== 'teardown' || latest.status !== 2)) throw recovery();
   }
 
@@ -451,6 +577,12 @@ export async function createPostgresConnection(
 
   if (installation) {
     latest = await readLatestRun(deps.caller);
+    if (latest?.action === 'create' || latest?.action === 'teardown') {
+      if (latest.status < 2) throw new OperationBusyError();
+      // A terminal lifecycle failure or a completed teardown alongside a
+      // visible resource is contradictory.  Do not provision into it.
+      if (latest.status === 3 || latest.action === 'teardown') throw recovery();
+    }
     const recovered = await reconcileLatestConnectionRun(
       deps,
       latest,
@@ -495,6 +627,7 @@ export async function createPostgresConnection(
       resourceId: installation.resource.id,
       platform: installation.platform,
       callerLabels,
+      operationId: identity.operationId,
     }),
     makeProvisionNote(identity),
   );
@@ -502,17 +635,18 @@ export async function createPostgresConnection(
     await wait(deps, runId);
   } catch (error) {
     if (isAbort(error)) throw error;
-    const failureStatus = await databaseFailureStatus(deps.caller, runId, access, error);
-    await cleanupRetry(deps, installation, identity, access, login);
+    const recovered = await reconcileFailedWait(
+      deps,
+      runId,
+      installation,
+      identity,
+      access,
+      login,
+      callerLabels,
+      error,
+    );
+    if (recovered) return recovered;
     if (isDatabaseRequestError(error)) throw error;
-    if (failureStatus !== null) {
-      throw new PostgresRequestError(
-        failureStatus,
-        failureStatus === 404
-          ? 'Requested PostgreSQL database was not found'
-          : 'Requested PostgreSQL database already exists',
-      );
-    }
     throw new Error(RUN_ERROR);
   }
 
@@ -521,17 +655,41 @@ export async function createPostgresConnection(
     persisted = await lookup(deps, installation, request.callingManagerId, access, callerLabels);
   } catch (error) {
     if (isAbort(error)) throw error;
-    await cleanupRetry(deps, installation, identity, access, login);
-    if (error instanceof PostgresRecoveryRequiredError) throw error;
+    // A successful runner may already have published the connection.  A
+    // failed enumeration is not evidence that it did not; reconcile by the
+    // operation's credentials and leave recovery to the next request.
+    let exact: RPC.GetRun;
+    try {
+      exact = await readExactRun(deps.caller, runId);
+      if (status(exact.run.status) !== 2) throw recovery();
+      const published = await findPublishedConnection(
+        deps.caller,
+        {
+          managerId: request.callingManagerId,
+          resourceId: installation.resource.id,
+          access,
+          username: login.username,
+          password: login.password,
+          labels: connectionLabels(access, callerLabels),
+        },
+        installation.platform,
+      );
+      if (published.kind === 'match') return published.connection;
+    } catch (recoveryError) {
+      if (isAbort(recoveryError)) throw recoveryError;
+      throw recovery();
+    }
     throw new Error(PERSIST_ERROR);
   }
   if (persisted.kind === 'match') return persisted.connection;
-  await cleanupRetry(deps, installation, identity, access, login);
   if (persisted.kind === 'conflict') {
     throw new PostgresRequestError(
       409,
       'A PostgreSQL connection already exists with different labels',
     );
   }
+  // The runner reported success but publication is not observable yet.  Do
+  // not drop the database/role; surface recovery so a later request can
+  // reconcile the durable connection.
   throw new Error(PERSIST_ERROR);
 }
