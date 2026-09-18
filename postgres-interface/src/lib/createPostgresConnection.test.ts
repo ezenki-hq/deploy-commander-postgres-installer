@@ -199,4 +199,56 @@ describe('createPostgresConnection', () => {
       expect.objectContaining({ action: 'create-connection' }),
     );
   });
+
+  it('normalizes a runner collision marker to a 409 response', async () => {
+    const caller = {
+      getMyResources: vi
+        .fn()
+        .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+      getResource: vi.fn().mockResolvedValue(resourceDetails()),
+      getRuns: vi.fn().mockResolvedValue({ items: [], limit: 1, offset: 0, total: 0 }),
+      databaseQuery: vi.fn().mockResolvedValue({ results: [{ status: 'OK', result: [] }] }),
+      getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
+      getRunLogs: vi.fn().mockResolvedValue({
+        items: [{ message: 'POSTGRES_MANAGER_ERROR: database-collision' }],
+        limit: 200,
+        offset: 0,
+        total: 1,
+      }),
+      start: vi.fn().mockImplementation(() => ({ id: 'run-1', status: 0, queued_at: 'now' })),
+    } as unknown as RPCCaller;
+    const requestApproval = vi.fn().mockResolvedValue({
+      allowed: true,
+      access: { scope: 'database', operation: 'create', database: 'orders' },
+    });
+    const workflow = deps(caller, requestApproval);
+    let waitCount = 0;
+    workflow.waitForRun = vi.fn().mockImplementation(() => {
+      waitCount += 1;
+      return waitCount === 1
+        ? Promise.reject(new RunFailedError('run-1', 3))
+        : Promise.resolve({ run: { id: 'run-1', status: 2 } });
+    });
+
+    await expect(
+      createPostgresConnection(workflow, {
+        currentManagerId: 'provider-manager',
+        callingManagerId: 'consumer-manager',
+        metadata: {
+          access: { scope: 'database', operation: 'create', database: 'orders' },
+          labels: {},
+        },
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'Requested PostgreSQL database already exists',
+    });
+    expect(caller.getRunLogs).toHaveBeenCalledWith({
+      run_id: 'run-1',
+      limit: 200,
+      offset: 0,
+      order: 'asc',
+    });
+    expect(caller.start).toHaveBeenCalledTimes(2);
+  });
 });

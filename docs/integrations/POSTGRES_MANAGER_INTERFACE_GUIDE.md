@@ -141,12 +141,12 @@ secure random bytes. A generated name is only a candidate; provisioning checks f
 collision and fails safely if the name is already in use. The manager never takes ownership
 of an existing database merely because a create request used a colliding name.
 
-Constrained full access is a dedicated login with broad permissions appropriate to the
-PostgreSQL installation but without `SUPERUSER`, `CREATEDB`, `CREATEROLE`, replication, or
-bypass-row-level-security privileges. Superuser access is a separate explicit choice and
-should be approved only for a fully trusted caller. Database access creates a dedicated
-login; existing-database access grants broad database-local access without changing the
-existing database owner.
+Constrained full access is a dedicated login with `CREATEDB` and broad permissions
+appropriate to the PostgreSQL installation, but without `SUPERUSER`, `CREATEROLE`,
+replication, or bypass-row-level-security privileges. Superuser access is a separate
+explicit choice and should be approved only for a fully trusted caller. Database access
+creates a dedicated login; existing-database access grants broad database-local access
+without changing the existing database owner.
 
 Rejecting the dialog closes the child with status `499`. The consuming manager should not
 retry rejection without a new user action.
