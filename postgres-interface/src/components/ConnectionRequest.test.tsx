@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { RPCCaller, RPC, Wire } from '@ezenki/deploy-commander-installer-interface';
 import ConnectionRequest from './ConnectionRequest';
 import { createRunEventSource } from '../lib/runMonitor';
@@ -19,12 +20,40 @@ function baseProps(caller: RPCCaller, wire: Wire) {
     currentManagerId: 'postgres-manager',
     callingManagerId: 'consumer-manager',
     resource,
-    storage: {
-      getItem: vi.fn().mockReturnValue(null),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-    } as unknown as Storage,
   };
+}
+
+const administrator = {
+  username: 'dc_admin_0123456789abcdef0123456789abcdef',
+  password: 'admin-password',
+};
+
+function installedCaller() {
+  const caller = {
+    getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+    getResource: vi.fn().mockResolvedValue({
+      resource,
+      config: {
+        id: resource.id,
+        manager: resource.manager,
+        agent: resource.agent,
+        resource_type: 'postgres',
+        name: 'postgres',
+        metadata: { engine: 'postgres', version: '15', administrator },
+        platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
+      },
+    }),
+    databaseQuery: vi.fn().mockResolvedValue({ results: [{ status: 'OK', result: [{ name: 'orders' }] }] }),
+    getRuns: vi.fn((...args: unknown[]) => Promise.resolve({
+      items: [],
+      limit: typeof args[4] === 'number' ? args[4] : 1,
+      offset: typeof args[5] === 'number' ? args[5] : 0,
+      total: 0,
+    })),
+    getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
+    start: vi.fn().mockRejectedValue(new Error('transport unavailable')),
+  } as unknown as RPCCaller;
+  return caller;
 }
 
 describe('ConnectionRequest child errors', () => {
@@ -82,6 +111,69 @@ describe('ConnectionRequest child errors', () => {
 });
 
 describe('ConnectionRequest lifecycle', () => {
+  it('passes complete metadata to the approval dialog and displays its superuser warning', async () => {
+    const caller = installedCaller();
+    const wire = { close: vi.fn() } as unknown as Wire;
+
+    render(<ConnectionRequest
+      {...baseProps(caller, wire)}
+      metadata={{
+        access: { scope: 'full', superuser: true },
+        labels: { team: 'payments' },
+      }}
+    />);
+
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible());
+    expect(screen.getByText('Dedicated superuser')).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent(/every database/i);
+    expect(screen.getByText('team=payments')).toBeVisible();
+  });
+
+  it('resolves approval with the configured access and sends it to the runner', async () => {
+    const user = userEvent.setup();
+    const caller = installedCaller();
+    const wire = { close: vi.fn() } as unknown as Wire;
+
+    render(<ConnectionRequest
+      {...baseProps(caller, wire)}
+      metadata={{ access: null, labels: { team: 'payments' } }}
+    />);
+
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeVisible());
+    await user.click(screen.getByRole('radio', { name: /full access/i }));
+    await user.click(screen.getByRole('button', { name: 'Approve connection' }));
+    await waitFor(() => expect(caller.start).toHaveBeenCalledWith(expect.objectContaining({ action: 'create-connection' })));
+    const options = (caller.start as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .find((call: unknown[]) => call[0] && typeof call[0] === 'object' && (call[0] as { action?: string }).action === 'create-connection')?.[0] as { metadata: { connections: { create: Array<{ metadata: unknown }> } } };
+    expect(options.metadata.connections.create[0].metadata).toEqual(expect.objectContaining({
+      access: { scope: 'full', superuser: false },
+    }));
+  });
+
+  it('returns 499 on rejection and requires a fresh decision for a second request', async () => {
+    const user = userEvent.setup();
+    const firstCaller = installedCaller();
+    const firstWire = { close: vi.fn() } as unknown as Wire;
+    const props = {
+      ...baseProps(firstCaller, firstWire),
+      metadata: { access: { scope: 'database' as const, operation: 'existing' as const, database: 'orders' }, labels: {} },
+    };
+    const view = render(<ConnectionRequest {...props} />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeVisible());
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+    await waitFor(() => expect(firstWire.close).toHaveBeenCalledWith({
+      manager: 'postgres-manager', ok: false,
+      error: { status: 499, message: 'Database access was cancelled' },
+    }));
+
+    view.unmount();
+    const secondCaller = installedCaller();
+    const secondWire = { close: vi.fn() } as unknown as Wire;
+    render(<ConnectionRequest {...baseProps(secondCaller, secondWire)} metadata={props.metadata} />);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeVisible());
+    expect(secondWire.close).not.toHaveBeenCalled();
+  });
+
   it('presents preparation in the PostgreSQL manager shell', () => {
     const wire = { close: vi.fn() } as unknown as Wire;
     const caller = {

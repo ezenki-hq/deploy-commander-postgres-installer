@@ -44,6 +44,19 @@ describe('ConnectionApprovalDialog', () => {
     expect(onApprove).toHaveBeenCalledWith(completeContext.requestedAccess);
   });
 
+  it('shows a prominent warning for a complete superuser request without allowing edits', () => {
+    renderDialog({
+      context: {
+        ...completeContext,
+        requestedAccess: { scope: 'full', superuser: true },
+      },
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/every database/i);
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
   it('lets the user configure a new database and generate its visible name', async () => {
     const user = userEvent.setup();
     const onApprove = vi.fn();

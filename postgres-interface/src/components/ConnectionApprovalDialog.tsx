@@ -96,7 +96,10 @@ export function ConnectionApprovalDialog({
           <div className="mt-2" data-testid="caller-labels">{labels(context)}</div>
         </div>
 
-        {requested ? <RequestSummary access={requested} /> : <div className="mt-5 space-y-5">
+        {requested ? <>
+          <RequestSummary access={requested} />
+          {requested.scope === 'full' && requested.superuser && <p role="alert" className="mt-4 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm font-semibold text-rose-900">Superuser access can read and change every database. Approve only if the calling manager is fully trusted.</p>}
+        </> : <div className="mt-5 space-y-5">
           <fieldset>
             <legend className="text-sm font-semibold text-slate-800">Access scope</legend>
             <div className="mt-2 flex flex-wrap gap-4 text-sm">
