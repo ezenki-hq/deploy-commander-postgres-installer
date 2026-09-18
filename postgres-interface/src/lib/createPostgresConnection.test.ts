@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import { createPostgresConnection, type ConnectionWorkflowDeps } from './createPostgresConnection';
 import type { PlatformConnection } from './postgresContracts';
+import { PostgresRequestError } from './postgresErrors';
 
 const platform: PlatformConnection = { type: 'Platform', data: { network: 'postgres-network' } };
 const resource: RPC.ResourceItem = {
@@ -85,7 +86,7 @@ describe('createPostgresConnection', () => {
       getRuns: vi.fn().mockResolvedValue({ items: [], limit: 1, offset: 0, total: 0 }),
       databaseQuery: vi
         .fn()
-        .mockResolvedValue({ results: [{ status: 'OK', result: [{ name: 'analytics' }] }] }),
+        .mockResolvedValue({ results: [{ status: 'OK', result: [{ name: 'orders' }] }] }),
       getConnections: vi
         .fn()
         .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
@@ -117,7 +118,7 @@ describe('createPostgresConnection', () => {
       installsPostgres: false,
       requestedAccess: { scope: 'database', operation: 'create', database: 'orders' },
       callerLabels: { team: 'payments' },
-      catalogDatabases: ['analytics'],
+      catalogDatabases: ['orders'],
     });
     expect(caller.start).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -152,5 +153,44 @@ describe('createPostgresConnection', () => {
     ).rejects.toMatchObject({ status: 499 });
     expect(requestApproval).toHaveBeenCalledTimes(1);
     expect(caller.start).not.toHaveBeenCalled();
+  });
+
+  it('lets the runner decide whether an uncatalogued existing database exists', async () => {
+    const caller = {
+      getMyResources: vi
+        .fn()
+        .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+      getResource: vi.fn().mockResolvedValue(resourceDetails()),
+      getRuns: vi.fn().mockResolvedValue({ items: [], limit: 1, offset: 0, total: 0 }),
+      databaseQuery: vi.fn().mockResolvedValue({ results: [{ status: 'OK', result: [] }] }),
+      getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
+      start: vi.fn().mockImplementation(() => ({ id: 'run-1', status: 0, queued_at: 'now' })),
+    } as unknown as RPCCaller;
+    const requestApproval = vi.fn().mockResolvedValue({
+      allowed: true,
+      access: { scope: 'database', operation: 'existing', database: 'orders' },
+    });
+    const workflow = deps(caller, requestApproval);
+    let waitCount = 0;
+    workflow.waitForRun = vi.fn().mockImplementation(() => {
+      waitCount += 1;
+      return waitCount === 1
+        ? Promise.reject(new PostgresRequestError(404, 'database not found'))
+        : Promise.resolve({ run: { id: 'run-1', status: 2 } });
+    });
+
+    await expect(
+      createPostgresConnection(workflow, {
+        currentManagerId: 'provider-manager',
+        callingManagerId: 'consumer-manager',
+        metadata: {
+          access: { scope: 'database', operation: 'existing', database: 'orders' },
+          labels: {},
+        },
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(caller.start).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'create-connection' }),
+    );
   });
 });

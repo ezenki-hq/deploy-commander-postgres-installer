@@ -113,6 +113,8 @@ describe('postgres access plans', () => {
         .services?.['postgres-admin']?.command?.[2] ?? '';
 
     expect(created).toContain('DROP DATABASE');
+    expect(created).toContain("owner_role.rolname = :'target_username'");
+    expect(created).not.toContain('DROP DATABASE IF EXISTS');
     expect(created.indexOf('DROP DATABASE')).toBeLessThan(created.indexOf('DROP ROLE'));
     expect(existing).not.toContain('DROP DATABASE');
     expect(full).not.toContain('DROP DATABASE');

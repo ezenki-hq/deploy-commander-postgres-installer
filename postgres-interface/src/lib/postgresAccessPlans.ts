@@ -188,13 +188,26 @@ if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 SELECT format('ALTER DATABASE %I WITH ALLOW_CONNECTIONS false', :'target_database')
-WHERE EXISTS (SELECT 1 FROM pg_database WHERE datname = :'target_database')
+FROM pg_database AS database_record
+JOIN pg_roles AS owner_role ON owner_role.oid = database_record.datdba
+WHERE database_record.datname = :'target_database'
+  AND owner_role.rolname = :'target_username'
 \gexec
 SELECT pg_terminate_backend(pid)
 FROM pg_stat_activity
-WHERE datname = :'target_database' AND pid <> pg_backend_pid();
+WHERE datname = :'target_database' AND pid <> pg_backend_pid()
+  AND EXISTS (
+    SELECT 1
+    FROM pg_database AS database_record
+    JOIN pg_roles AS owner_role ON owner_role.oid = database_record.datdba
+    WHERE database_record.datname = :'target_database'
+      AND owner_role.rolname = :'target_username'
+  );
 SELECT format('DROP DATABASE %I', :'target_database')
-WHERE EXISTS (SELECT 1 FROM pg_database WHERE datname = :'target_database')
+FROM pg_database AS database_record
+JOIN pg_roles AS owner_role ON owner_role.oid = database_record.datdba
+WHERE database_record.datname = :'target_database'
+  AND owner_role.rolname = :'target_username'
 \gexec
 SELECT format('REASSIGN OWNED BY %I TO CURRENT_USER', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')

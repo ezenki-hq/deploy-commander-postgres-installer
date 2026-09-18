@@ -84,6 +84,10 @@ function isAbort(value: unknown): boolean {
   return record(value) && value.name === 'AbortError';
 }
 
+function isDatabaseRequestError(value: unknown): value is PostgresRequestError {
+  return value instanceof PostgresRequestError && (value.status === 404 || value.status === 409);
+}
+
 function operationId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -390,18 +394,6 @@ export async function createPostgresConnection(
     throw new PostgresRequestError(400, 'Approved access does not match the manager request');
   }
   const access = decision.access;
-  if (access.scope === 'database') {
-    if (access.operation === 'create' && catalogDatabases.includes(access.database)) {
-      throw new PostgresRequestError(409, `Database ${access.database} already exists`);
-    }
-    if (
-      access.operation === 'existing' &&
-      installation &&
-      !catalogDatabases.includes(access.database)
-    ) {
-      throw new PostgresRequestError(404, `Database ${access.database} was not found`);
-    }
-  }
 
   if (installation) {
     latest = await readLatestRun(deps.caller);
@@ -421,15 +413,6 @@ export async function createPostgresConnection(
     (() => {
       throw recovery();
     })();
-  if (access.scope === 'database') {
-    catalogDatabases = await listCatalogDatabases(deps.caller, installation.resource.id);
-    if (access.operation === 'create' && catalogDatabases.includes(access.database)) {
-      throw new PostgresRequestError(409, `Database ${access.database} already exists`);
-    }
-    if (access.operation === 'existing' && !catalogDatabases.includes(access.database)) {
-      throw new PostgresRequestError(404, `Database ${access.database} was not found`);
-    }
-  }
 
   const current = await lookup(deps, installation, request.callingManagerId, access, callerLabels);
   if (current.kind === 'match') return current.connection;
@@ -466,18 +449,13 @@ export async function createPostgresConnection(
   } catch (error) {
     if (isAbort(error)) throw error;
     await cleanupRetry(deps, installation, identity, access, login);
+    if (isDatabaseRequestError(error)) throw error;
     throw new Error(RUN_ERROR);
   }
 
   let persisted: ConnectionLookupResult;
   try {
-    persisted = await lookup(
-      deps,
-      installation,
-      request.callingManagerId,
-      access,
-      callerLabels,
-    );
+    persisted = await lookup(deps, installation, request.callingManagerId, access, callerLabels);
   } catch (error) {
     if (isAbort(error)) throw error;
     await cleanupRetry(deps, installation, identity, access, login);
