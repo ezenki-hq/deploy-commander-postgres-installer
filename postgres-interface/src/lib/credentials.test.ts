@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   generateAdminCredentials,
   generateConnectionCredentials,
+  generateLoginCredentials,
   type RandomBytes,
 } from './credentials';
 
@@ -61,5 +62,23 @@ describe('generateConnectionCredentials', () => {
 
     expect(() => generateAdminCredentials(invalidRandom)).toThrow();
     expect(() => generateConnectionCredentials(invalidRandom)).toThrow();
+  });
+});
+
+describe('generateLoginCredentials', () => {
+  it('generates an independent login without a database name', () => {
+    const { random } = sequenceRandomBytes();
+    const login = generateLoginCredentials(random);
+
+    expect(login.username).toMatch(/^dc_user_[0-9a-f]{32}$/);
+    expect(login.password).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(login).not.toHaveProperty('database');
+  });
+
+  it('uses one random call for the username and one for the password', () => {
+    const generated = sequenceRandomBytes();
+    generateLoginCredentials(generated.random);
+
+    expect(generated.calls).toEqual([16, 32]);
   });
 });

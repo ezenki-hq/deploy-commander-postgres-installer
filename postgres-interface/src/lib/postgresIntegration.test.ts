@@ -1,17 +1,17 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
-import { buildCleanupPlan, buildProvisionPlan } from './postgresPlans';
-import { generateConnectionCredentials } from './credentials';
-import type { PlatformConnection } from './postgresContracts';
+import { buildAccessService, buildCleanupService } from './postgresAccessPlans';
+import { generateLoginCredentials } from './credentials';
+import type { AccessRequest } from './postgresConnectionRequest';
+import type { PlatformConnection, RunnerService } from './postgresContracts';
 
 const container = process.env.POSTGRES_INTEGRATION_CONTAINER;
 const password = process.env.POSTGRES_INTEGRATION_PASSWORD ?? 'integration_only_password';
 const platform: PlatformConnection = { type: 'Platform', data: { network: 'integration-network' } };
-const administrator = { username: 'integration_admin', password };
-const logical = {
-  ...generateConnectionCredentials((length) => new Uint8Array(length).fill(7)),
-  password: 'integration_logical_password',
+const administrator = {
+  username: process.env.POSTGRES_INTEGRATION_USER ?? 'integration_admin',
+  password,
 };
 
 interface CommandResult {
@@ -24,69 +24,156 @@ function runDocker(args: string[], input = ''): Promise<CommandResult> {
     const child = spawn('docker', args, { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
     child.once('error', () => reject(new Error('Docker is unavailable')));
     child.once('close', (code) => {
       if (code === 0) resolve({ stdout, stderr });
-      else reject(new Error(`Docker command failed with status ${code ?? 'unknown'}`));
+      else reject(new Error(`Docker command failed with status ${code ?? 'unknown'}: ${stderr}`));
     });
     child.stdin.end(input);
   });
 }
 
-function serviceArgs(command: string[]): string[] {
-  const environment = {
-    PGHOST: '127.0.0.1',
-    PGPORT: '5432',
-    PGDATABASE: 'postgres',
-    PGUSER: administrator.username,
-    PGPASSWORD: administrator.password,
-    TARGET_DATABASE: logical.database,
-    TARGET_USERNAME: logical.username,
-    TARGET_PASSWORD: logical.password,
-  };
+function serviceArgs(service: RunnerService): string[] {
+  const environment = { ...service.environment, PGHOST: '127.0.0.1' };
   return [
-    'exec', '-i', ...Object.entries(environment).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
-    container!, ...command,
+    'exec',
+    '-i',
+    ...Object.entries(environment).flatMap(([key, value]) => ['-e', `${key}=${value}`]),
+    container!,
+    ...service.command!,
   ];
 }
 
 async function query(sql: string): Promise<string> {
   const result = await runDocker([
-    'exec', '-i', '-e', `PGPASSWORD=${administrator.password}`, container!,
-    'psql', '-X', '-At', '-U', administrator.username, '-d', 'postgres', '-c', sql,
+    'exec',
+    '-i',
+    '-e',
+    `PGPASSWORD=${administrator.password}`,
+    container!,
+    'psql',
+    '-X',
+    '-At',
+    '-U',
+    administrator.username,
+    '-d',
+    'postgres',
+    '-c',
+    sql,
   ]);
   return result.stdout.trim();
 }
 
-describe.skipIf(!container)('opt-in PostgreSQL provisioning integration', () => {
-  it('provisions idempotently, scopes privileges, and cleans up', async () => {
-    const provision = buildProvisionPlan(administrator, logical, platform);
-    const service = provision.services?.['postgres-admin'];
-    if (!service) throw new Error('Provisioning service is missing');
-    const command = service.command;
+function testLogin(seed: number) {
+  return generateLoginCredentials((length) => new Uint8Array(length).fill(seed));
+}
 
-    const first = await runDocker(serviceArgs(command!));
-    const second = await runDocker(serviceArgs(command!));
-    const provisionOutput = `${first.stdout}\n${first.stderr}\n${second.stdout}\n${second.stderr}`;
-    expect(provisionOutput).not.toContain(password);
-    expect(provisionOutput).not.toContain(logical.password);
+async function runAccess(access: AccessRequest, seed: number): Promise<CommandResult> {
+  const login = testLogin(seed);
+  const service = buildAccessService(access, administrator, login, platform).services?.[
+    'postgres-admin'
+  ];
+  if (!service) throw new Error('Access service is missing');
+  return runDocker(serviceArgs(service));
+}
 
-    expect(await query(`SELECT rolname FROM pg_roles WHERE rolname = '${logical.username}'`)).toBe(logical.username);
-    expect(await query(`SELECT datname FROM pg_database WHERE datname = '${logical.database}'`)).toBe(logical.database);
-    expect(await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${logical.database}'`)).toBe(logical.username);
-    expect(await query(`SELECT has_database_privilege('${logical.username}', '${logical.database}', 'CREATE')`)).toBe('t');
+async function cleanupAccess(access: AccessRequest, seed: number): Promise<CommandResult> {
+  const login = testLogin(seed);
+  const service = buildCleanupService(access, administrator, login, platform).services?.[
+    'postgres-admin'
+  ];
+  if (!service) throw new Error('Cleanup service is missing');
+  return runDocker(serviceArgs(service));
+}
 
-    const cleanup = buildCleanupPlan(administrator, logical.database, logical.username, platform);
-    const cleanupService = cleanup.services?.['postgres-admin'];
-    if (!cleanupService) throw new Error('Cleanup service is missing');
-    const cleanupCommand = cleanupService.command;
-    const removed = await runDocker(serviceArgs(cleanupCommand!));
-    const cleanupOutput = `${removed.stdout}\n${removed.stderr}`;
-    expect(cleanupOutput).not.toContain(password);
-    expect(cleanupOutput).not.toContain(logical.password);
-    expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${logical.username}'`)).toBe('0');
-    expect(await query(`SELECT count(*) FROM pg_database WHERE datname = '${logical.database}'`)).toBe('0');
+describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
+  it('creates a new database and removes it during created-database cleanup', async () => {
+    const database = `db_it_create_${Date.now()}`;
+    const access = { scope: 'database', operation: 'create', database } as const;
+    const login = testLogin(7);
+    const output = await runAccess(access, 7);
+
+    expect(`${output.stdout}\n${output.stderr}`).not.toContain(password);
+    expect(`${output.stdout}\n${output.stderr}`).not.toContain(login.password);
+    expect(
+      await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${database}'`),
+    ).toBe(login.username);
+    await cleanupAccess(access, 7);
+    expect(await query(`SELECT count(*) FROM pg_database WHERE datname = '${database}'`)).toBe('0');
+    expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+      '0',
+    );
+  }, 180_000);
+
+  it('grants access to an existing database without changing its owner', async () => {
+    const database = `db_it_existing_${Date.now()}`;
+    const access = { scope: 'database', operation: 'existing', database } as const;
+    await query(`CREATE DATABASE "${database}"`);
+    try {
+      await runAccess(access, 8);
+      const login = testLogin(8);
+      expect(
+        await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${database}'`),
+      ).toBe(administrator.username);
+      expect(
+        await query(`SELECT has_database_privilege('${login.username}', '${database}', 'CREATE')`),
+      ).toBe('t');
+      await cleanupAccess(access, 8);
+      expect(await query(`SELECT count(*) FROM pg_database WHERE datname = '${database}'`)).toBe(
+        '1',
+      );
+    } finally {
+      await query(`DROP DATABASE IF EXISTS "${database}"`);
+    }
+  }, 180_000);
+
+  it('rejects a new-database collision without changing its owner', async () => {
+    const database = `db_it_collision_${Date.now()}`;
+    const access = { scope: 'database', operation: 'create', database } as const;
+    await query(`CREATE DATABASE "${database}"`);
+    try {
+      await expect(runAccess(access, 9)).rejects.toThrow();
+      expect(
+        await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${database}'`),
+      ).toBe(administrator.username);
+    } finally {
+      await query(`DROP DATABASE IF EXISTS "${database}"`);
+    }
+  }, 180_000);
+
+  it('creates constrained full access with CREATEDB but not SUPERUSER', async () => {
+    const access = { scope: 'full', superuser: false } as const;
+    const login = testLogin(10);
+    await runAccess(access, 10);
+    try {
+      expect(await query(`SELECT rolsuper FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+        'f',
+      );
+      expect(
+        await query(`SELECT rolcreatedb FROM pg_roles WHERE rolname = '${login.username}'`),
+      ).toBe('t');
+    } finally {
+      await cleanupAccess(access, 10);
+    }
+  }, 180_000);
+
+  it('creates a dedicated superuser without reusing the administrator', async () => {
+    const access = { scope: 'full', superuser: true } as const;
+    const login = testLogin(11);
+    await runAccess(access, 11);
+    try {
+      expect(await query(`SELECT rolsuper FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+        't',
+      );
+      expect(login.username).not.toBe(administrator.username);
+    } finally {
+      await cleanupAccess(access, 11);
+    }
   }, 180_000);
 });

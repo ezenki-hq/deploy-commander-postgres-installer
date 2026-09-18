@@ -5,6 +5,12 @@ export interface AdminCredentials {
   password: string;
 }
 
+export interface LoginCredentials {
+  username: string;
+  password: string;
+}
+
+/** @deprecated Database selection is part of the approved access request. */
 export interface LogicalCredentials {
   database: string;
   username: string;
@@ -30,14 +36,28 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-export function generateAdminCredentials(random: RandomBytes = browserRandomBytes): AdminCredentials {
+export function generateAdminCredentials(
+  random: RandomBytes = browserRandomBytes,
+): AdminCredentials {
   return {
     username: `dc_admin_${toHex(getBytes(random, 16))}`,
     password: toBase64Url(getBytes(random, 32)),
   };
 }
 
-export function generateConnectionCredentials(random: RandomBytes = browserRandomBytes): LogicalCredentials {
+export function generateLoginCredentials(
+  random: RandomBytes = browserRandomBytes,
+): LoginCredentials {
+  return {
+    username: `dc_user_${toHex(getBytes(random, 16))}`,
+    password: toBase64Url(getBytes(random, 32)),
+  };
+}
+
+/** @deprecated Use generateLoginCredentials and an approved access request. */
+export function generateConnectionCredentials(
+  random: RandomBytes = browserRandomBytes,
+): LogicalCredentials {
   return {
     database: `db_${toHex(getBytes(random, 16))}`,
     username: `dc_user_${toHex(getBytes(random, 16))}`,
