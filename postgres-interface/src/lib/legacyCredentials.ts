@@ -1,11 +1,13 @@
-export type RandomBytes = (length: number) => Uint8Array;
+/**
+ * Compatibility boundary for the pre-approval connection workflow.
+ *
+ * New connection requests must use LoginCredentials plus an approved
+ * AccessRequest; this module exists only while the old workflow is migrated.
+ */
+import type { RandomBytes } from './credentials';
 
-export interface AdminCredentials {
-  username: string;
-  password: string;
-}
-
-export interface LoginCredentials {
+export interface LogicalCredentials {
+  database: string;
   username: string;
   password: string;
 }
@@ -29,19 +31,11 @@ function toBase64Url(bytes: Uint8Array): string {
   return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
-export function generateAdminCredentials(
+export function generateConnectionCredentials(
   random: RandomBytes = browserRandomBytes,
-): AdminCredentials {
+): LogicalCredentials {
   return {
-    username: `dc_admin_${toHex(getBytes(random, 16))}`,
-    password: toBase64Url(getBytes(random, 32)),
-  };
-}
-
-export function generateLoginCredentials(
-  random: RandomBytes = browserRandomBytes,
-): LoginCredentials {
-  return {
+    database: `db_${toHex(getBytes(random, 16))}`,
     username: `dc_user_${toHex(getBytes(random, 16))}`,
     password: toBase64Url(getBytes(random, 32)),
   };

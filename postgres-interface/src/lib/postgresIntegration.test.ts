@@ -51,19 +51,28 @@ function serviceArgs(service: RunnerService): string[] {
 }
 
 async function query(sql: string): Promise<string> {
+  return queryAs(administrator.username, administrator.password, 'postgres', sql);
+}
+
+async function queryAs(
+  username: string,
+  userPassword: string,
+  database: string,
+  sql: string,
+): Promise<string> {
   const result = await runDocker([
     'exec',
     '-i',
     '-e',
-    `PGPASSWORD=${administrator.password}`,
+    `PGPASSWORD=${userPassword}`,
     container!,
     'psql',
     '-X',
     '-At',
     '-U',
-    administrator.username,
+    username,
     '-d',
-    'postgres',
+    database,
     '-c',
     sql,
   ]);
@@ -124,7 +133,16 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
       expect(
         await query(`SELECT has_database_privilege('${login.username}', '${database}', 'CREATE')`),
       ).toBe('t');
+      await queryAs(
+        login.username,
+        login.password,
+        database,
+        'CREATE TABLE cleanup_marker (id integer PRIMARY KEY)',
+      );
       await cleanupAccess(access, 8);
+      expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+        '0',
+      );
       expect(await query(`SELECT count(*) FROM pg_database WHERE datname = '${database}'`)).toBe(
         '1',
       );
@@ -160,6 +178,9 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
       ).toBe('t');
     } finally {
       await cleanupAccess(access, 10);
+      expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+        '0',
+      );
     }
   }, 180_000);
 
@@ -174,6 +195,9 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
       expect(login.username).not.toBe(administrator.username);
     } finally {
       await cleanupAccess(access, 11);
+      expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
+        '0',
+      );
     }
   }, 180_000);
 });

@@ -208,15 +208,38 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 SQL
 ${psqlFailure('PostgreSQL created database cleanup failed')}`;
 
-const roleOnlyCleanupScript = String.raw`${readiness}
-if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
-\getenv target_username TARGET_USERNAME
+const roleCleanupSql = String.raw`\getenv target_username TARGET_USERNAME
 SELECT format('REASSIGN OWNED BY %I TO CURRENT_USER', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec
 SELECT format('DROP OWNED BY %I', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
-\gexec
+\gexec`;
+
+const roleOnlyCleanupScript = String.raw`${readiness}
+database_list=$(mktemp)
+trap 'rm -f "$database_list"' EXIT
+if ! psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 \
+  -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true AND has_database_privilege(current_user, datname, 'CONNECT')" \
+  >"$database_list" 2>/dev/null; then
+  echo "PostgreSQL accessible database enumeration failed" >&2
+  exit 1
+fi
+while IFS= read -r target_database; do
+  if [ -z "$target_database" ]; then
+    continue
+  fi
+  if ! TARGET_DATABASE="$target_database" PGDATABASE="$target_database" \
+    psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
+${roleCleanupSql}
+SQL
+  then
+    echo "PostgreSQL role cleanup failed" >&2
+    exit 1
+  fi
+done <"$database_list"
+if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
+\getenv target_username TARGET_USERNAME
 SELECT format('DROP ROLE %I', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   generateAdminCredentials,
-  generateConnectionCredentials,
   generateLoginCredentials,
   type RandomBytes,
 } from './credentials';
+import { generateConnectionCredentials } from './legacyCredentials';
 
 function sequenceRandomBytes(): { random: RandomBytes; calls: number[] } {
   const calls: number[] = [];

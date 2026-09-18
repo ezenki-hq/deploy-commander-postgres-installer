@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { LogicalCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
 import type { PlatformConnection } from './postgresContracts';
 import {
   buildCleanupPlan,

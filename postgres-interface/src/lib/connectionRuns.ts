@@ -1,5 +1,5 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
-import type { LogicalCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
 
 export type RunStatus = 0 | 1 | 2 | 3;
@@ -37,7 +37,6 @@ export function parseConnectionNote(note: unknown): ConnectionNote {
   validIdentity(identity);
   return { kind: fields[0] === 'postgres-provision' ? 'provision' : 'cleanup', ...identity };
 }
-
 function isStatus(value: unknown): value is RunStatus { return value === 0 || value === 1 || value === 2 || value === 3; }
 function readRun(value: unknown, expectedAction: 'create-connection' | 'cleanup-connection') {
   if (!isRecord(value) || !isRecord(value.run) || !isRecord(value.config)) throw recovery();

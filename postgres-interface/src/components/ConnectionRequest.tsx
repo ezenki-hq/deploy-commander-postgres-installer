@@ -3,7 +3,8 @@ import type { RPC, RPCCaller, Wire } from '@ezenki/deploy-commander-installer-in
 import PermissionDialog from './PermissionDialog';
 import ManagerShell from './ManagerShell';
 import StatusPanel from './StatusPanel';
-import { generateAdminCredentials, generateConnectionCredentials } from '../lib/credentials';
+import { generateAdminCredentials } from '../lib/credentials';
+import { generateConnectionCredentials } from '../lib/legacyCredentials';
 import { createPostgresConnection, type PermissionDecision } from '../lib/createPostgresConnection';
 import type { RunEventSource } from '../lib/runMonitor';
 import { waitForRun } from '../lib/runMonitor';
@@ -23,7 +24,6 @@ export interface ConnectionRequestProps {
   initialResult?: RPC.CreateConnection | null;
   storage?: Storage;
 }
-
 function closeError(wire: Wire, manager: string, status: number, message: string): void {
   wire.close({ manager, ok: false, error: { status, message } });
 }

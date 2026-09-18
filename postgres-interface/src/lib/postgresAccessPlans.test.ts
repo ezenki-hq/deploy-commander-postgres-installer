@@ -118,6 +118,11 @@ describe('postgres access plans', () => {
     expect(full).not.toContain('DROP DATABASE');
     expect(existing).toContain('REASSIGN OWNED');
     expect(full).toContain('DROP OWNED');
+    expect(existing).toContain('datistemplate = false');
+    expect(existing).toContain("has_database_privilege(current_user, datname, 'CONNECT')");
+    expect(existing.indexOf('DROP ROLE')).toBeGreaterThan(
+      existing.indexOf('done <"$database_list"'),
+    );
   });
 
   it('does not embed credentials or enable shell tracing', () => {

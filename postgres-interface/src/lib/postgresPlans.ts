@@ -1,4 +1,5 @@
-import type { AdminCredentials, LogicalCredentials } from './credentials';
+import type { AdminCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
 import {
   parsePlatformConnection,
   type PlatformConnection,
@@ -86,7 +87,6 @@ function assertNonBlank(value: unknown, label: string): asserts value is string 
     throw new Error(`Invalid ${label}`);
   }
 }
-
 function assertGeneratedDatabase(value: unknown): asserts value is string {
   assertNonBlank(value, 'logical database');
   if (!DATABASE_PATTERN.test(value)) {

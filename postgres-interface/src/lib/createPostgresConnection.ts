@@ -1,7 +1,8 @@
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import { buildCleanupPlan, buildConnectionMetadata, buildProvisionPlan } from './postgresPlans';
 import { isPermissionRemembered, rememberPermission } from './permissionPreference';
-import type { AdminCredentials, LogicalCredentials } from './credentials';
+import type { AdminCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
 import { findExistingConnection, normalizePostgresConnection } from './postgresConnectionContract';
 import { listPostgresResources, readPostgresInstallation, type PostgresInstallation } from './postgresResource';
 import { findCorrelatedRun, readExactRun, readLatestRun, type RunStatus } from './postgresRuns';
