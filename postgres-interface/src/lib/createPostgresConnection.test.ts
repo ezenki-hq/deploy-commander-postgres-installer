@@ -76,6 +76,35 @@ function deps(caller: RPCCaller, requestApproval: ConnectionWorkflowDeps['reques
   } as unknown as ConnectionWorkflowDeps;
 }
 
+function terminalRunMethods() {
+  let started: { note?: string; metadata?: unknown } | undefined;
+  return {
+    start: vi.fn().mockImplementation((options: { note?: string; metadata?: unknown }) => {
+      started = options;
+      return { id: 'run-1', status: 0, queued_at: 'now' };
+    }),
+    getRun: vi.fn().mockImplementation(() => ({
+      run: {
+        id: 'run-1',
+        action: 'create-connection',
+        note: started?.note,
+        status: 3,
+        queued_at: 'now',
+        created_at: 'now',
+        updated_at: 'now',
+      },
+      config: {
+        id: 'run-1',
+        action: 'create-connection',
+        manager: 'provider-manager',
+        run: 'run-1',
+        runner: 'ezenki/deploy-commander-runner:latest',
+        metadata: started?.metadata,
+      },
+    })),
+  };
+}
+
 describe('createPostgresConnection', () => {
   it('requests approval and persists the connection through the runner', async () => {
     const caller = {
@@ -170,7 +199,7 @@ describe('createPostgresConnection', () => {
         offset: 0,
         total: 1,
       }),
-      start: vi.fn().mockImplementation(() => ({ id: 'run-1', status: 0, queued_at: 'now' })),
+      ...terminalRunMethods(),
     } as unknown as RPCCaller;
     const requestApproval = vi.fn().mockResolvedValue({
       allowed: true,
@@ -215,7 +244,7 @@ describe('createPostgresConnection', () => {
         offset: 0,
         total: 1,
       }),
-      start: vi.fn().mockImplementation(() => ({ id: 'run-1', status: 0, queued_at: 'now' })),
+      ...terminalRunMethods(),
     } as unknown as RPCCaller;
     const requestApproval = vi.fn().mockResolvedValue({
       allowed: true,

@@ -385,9 +385,12 @@ export async function findPublishedConnection(
       summary,
       { managerId: identity.managerId, resourceId: identity.resourceId },
       platform,
-      { requireAccess: true },
     );
     const metadata = connection.config.metadata as unknown as UnknownRecord;
+    // Legacy v1 records intentionally have no access discriminator. They are
+    // valid independent connections and must not prevent recovery of a
+    // modern operation on the same manager/resource.
+    if (!Object.prototype.hasOwnProperty.call(metadata, 'access')) continue;
     if (!validAccess(metadata.access) || !accessIdentityEqual(metadata.access, identity.access))
       continue;
     const labelsMatch =

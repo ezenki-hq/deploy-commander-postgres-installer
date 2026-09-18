@@ -20,6 +20,7 @@ import {
 import { findCorrelatedRun, readExactRun, readLatestRun, type RunStatus } from './postgresRuns';
 import {
   makeCleanupNote,
+  makeLegacyCleanupNote,
   makeProvisionNote,
   parseCleanupRun,
   parseProvisionRun,
@@ -351,7 +352,7 @@ async function cleanupRetry(
           platform: installation.platform,
           catalogOperationId: options.catalogOperationId ?? identity.operationId,
         }),
-    makeCleanupNote(fresh),
+    options.legacy ? makeLegacyCleanupNote(fresh) : makeCleanupNote(fresh),
   );
   try {
     await wait(deps, runId);
@@ -415,7 +416,6 @@ async function reconcileProvision(
 async function reconcileFailedWait(
   deps: ConnectionWorkflowDeps,
   runId: string,
-  installation: PostgresInstallation,
   identity: ConnectionOperationIdentity,
   access: AccessRequest,
   login: LoginCredentials,
@@ -426,22 +426,6 @@ async function reconcileFailedWait(
   try {
     exact = await readExactRun(deps.caller, runId);
   } catch {
-    // Older host test doubles predate getRun on the caller.  The production
-    // interface always exposes it; retain the v1 failure fallback only for
-    // that explicitly absent method, never for an uncertain transport read.
-    if (originalError instanceof RunFailedError && typeof deps.caller.getRun !== 'function') {
-      const failureStatus = await databaseFailureStatus(deps.caller, runId, access, originalError);
-      await cleanupRetry(deps, installation, identity, access, login);
-      if (failureStatus !== null) {
-        throw new PostgresRequestError(
-          failureStatus,
-          failureStatus === 404
-            ? 'Requested PostgreSQL database was not found'
-            : 'Requested PostgreSQL database already exists',
-        );
-      }
-      throw new Error(RUN_ERROR);
-    }
     // The terminal state is unknown.  Never compensate an operation that may
     // still be active or may already have published a connection.
     throw recovery();
@@ -511,9 +495,24 @@ export async function reconcileLatestConnectionRun(
   if (exact.run.action === 'cleanup-connection') {
     const cleanup: CleanupRunRecord = parseCleanupRun(exact);
     if (runStatus < 2) throw recovery();
-    if (runStatus === 2) return { kind: 'retry' };
     const installation = await resources(deps.caller);
-    if (!installation) throw recovery();
+    if (!installation || installation.resource.id !== cleanup.identity.resourceId) throw recovery();
+    if (runStatus === 2) {
+      if (
+        cleanup.version !== 'v1' &&
+        cleanup.access.scope === 'database' &&
+        cleanup.access.operation === 'create'
+      ) {
+        if (!cleanup.catalogOperationId) throw recovery();
+        await confirmCatalogCleanup(
+          deps.caller,
+          installation.resource.id,
+          cleanup.access.database,
+          cleanup.catalogOperationId,
+        );
+      }
+      return { kind: 'retry' };
+    }
     await cleanupRetry(deps, installation, cleanup.identity, cleanup.access, cleanup.login, {
       legacy: cleanup.version === 'v1',
       catalogOperationId: cleanup.catalogOperationId ?? cleanup.identity.operationId,
@@ -638,7 +637,6 @@ export async function createPostgresConnection(
     const recovered = await reconcileFailedWait(
       deps,
       runId,
-      installation,
       identity,
       access,
       login,

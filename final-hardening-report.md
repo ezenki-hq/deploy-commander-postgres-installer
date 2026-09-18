@@ -8,12 +8,13 @@ Implemented the blocking findings from `final-review.md`.
 - Gated connection provisioning on active or contradictory lifecycle runs.
 - Added operation ownership to managed database catalog records. Cleanup marks ownership in the runner hook and only manager-confirmed successful cleanup can delete the owned row. Catalog creation timestamps are stable across upserts.
 - Made `__proto__` and other prototype-named labels safe through parsing, plan construction, lookup, and run recovery.
-- Added focused regression coverage in `src/lib/finalHardening.test.ts` plus the App integration test.
+- Kept retried legacy cleanup runs on the v1 note/metadata protocol, ignored unrelated valid v1 connections during v2 publication recovery, and finalized owned catalog deletion when resuming a successful cleanup.
+- Removed the capability-missing destructive test-double fallback and added focused regression coverage in `src/lib/finalHardening.test.ts` plus the App integration test.
 
 Verification completed in `postgres-interface`:
 
 ```text
-npm test                 # 246 passed, 5 skipped
+npm test                 # 250 passed, 5 skipped
 npm run lint             # passed
 npm run build            # passed
 npm run format:check     # passed

@@ -89,6 +89,12 @@ export const makeProvisionNote = (identity: ConnectionOperationIdentity): string
 export const makeCleanupNote = (identity: ConnectionOperationIdentity): string =>
   makeNote('cleanup', identity);
 
+/** Preserve the v1 note protocol when retrying a legacy service-only cleanup. */
+export const makeLegacyCleanupNote = (identity: ConnectionOperationIdentity): string => {
+  validIdentity(identity);
+  return `postgres-cleanup:v1:${encodeURIComponent(identity.callerId)}:${encodeURIComponent(identity.resourceId)}:${identity.operationId}`;
+};
+
 export function parseConnectionNote(note: unknown): ConnectionNote {
   if (typeof note !== 'string') throw recovery();
   const fields = note.split(':');
