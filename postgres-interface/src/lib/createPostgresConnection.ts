@@ -10,6 +10,7 @@ import {
   findLegacyPublishedConnection,
   findPublishedConnection,
   databaseSuggestions,
+  databaseConnectionState,
   listResourcePostgresConnections,
   type ConnectionLookupResult,
 } from './postgresConnectionContract';
@@ -18,7 +19,7 @@ import {
   readPostgresInstallation,
   type PostgresInstallation,
 } from './postgresResource';
-import { findCorrelatedRun, readExactRun, type RunStatus } from './postgresRuns';
+import { findCorrelatedRun, readActivePostgresRun, readExactRun, type RunStatus } from './postgresRuns';
 import {
   makeCleanupNote,
   makeLegacyCleanupNote,
@@ -31,6 +32,7 @@ import {
 } from './connectionRuns';
 import { RunFailedError, waitForRun, type RunEventSource } from './runMonitor';
 import {
+  OperationBusyError,
   PostgresNotInstalledError,
   PostgresRecoveryRequiredError,
   PostgresRequestError,
@@ -43,10 +45,13 @@ import {
 
 export interface ApprovalContext {
   callingManagerId: string;
-  installsPostgres: boolean;
   requestedAccess: AccessRequest | null;
   callerLabels: Record<string, string>;
-  catalogDatabases: string[];
+  databaseSuggestions?: string[];
+  /** @deprecated compatibility for older child-interface callers. */
+  catalogDatabases?: string[];
+  /** @deprecated installation is now a separate direct action. */
+  installsPostgres?: boolean;
 }
 
 export type ApprovalDecision = { allowed: false } | { allowed: true; access: AccessRequest };
@@ -490,7 +495,7 @@ export async function createPostgresConnection(
   const installation = await resources(deps.caller);
   if (!installation) throw new PostgresNotInstalledError();
 
-  let catalogDatabases: string[] = [];
+  let databaseSuggestionsList: string[] = [];
   if (installation) {
     try {
       const connections = await listResourcePostgresConnections(
@@ -498,17 +503,16 @@ export async function createPostgresConnection(
         installation.resource.id,
         installation.platform,
       );
-      catalogDatabases = databaseSuggestions(connections);
+      databaseSuggestionsList = databaseSuggestions(connections);
     } catch {
-      catalogDatabases = [];
+      databaseSuggestionsList = [];
     }
   }
   const decision = await deps.requestApproval({
     callingManagerId: request.callingManagerId,
-    installsPostgres: installation === null,
     requestedAccess,
     callerLabels,
-    catalogDatabases,
+    databaseSuggestions: databaseSuggestionsList,
   });
   if (!decision || decision.allowed !== true) {
     throw new PostgresRequestError(499, 'Database access was cancelled');
@@ -521,7 +525,28 @@ export async function createPostgresConnection(
   }
   const access = decision.access;
 
-  const origin = access.scope === 'full' ? null : access.operation === 'create' ? 'managed' : 'existing';
+  try {
+    const active = await readActivePostgresRun(deps.caller);
+    if (active) throw new OperationBusyError();
+  } catch (error) {
+    if (error instanceof OperationBusyError) throw error;
+    // Older callers may not expose the active-run query; resource and
+    // connection revalidation remain authoritative for that compatibility path.
+  }
+
+  const origin =
+    access.scope === 'full'
+      ? null
+      : access.operation === 'create'
+        ? 'managed'
+        : (databaseConnectionState(
+              await listResourcePostgresConnections(
+                deps.caller,
+                installation.resource.id,
+                installation.platform,
+              ),
+              access.database,
+            ).origin ?? 'existing');
 
   const current = await lookup(deps, installation, request.callingManagerId, access, callerLabels, origin);
   if (current.kind === 'match') return current.connection;

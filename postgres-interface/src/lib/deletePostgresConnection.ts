@@ -3,7 +3,6 @@ import { buildCleanupPlan } from './postgresPlans';
 import {
   makeCleanupNote,
   parseCleanupRun,
-  parseConnectionNote,
   type CleanupRunRecord,
 } from './connectionRuns';
 import {
@@ -11,9 +10,9 @@ import {
   readPostgresInstallation,
   type PostgresInstallation,
 } from './postgresResource';
-import { findCorrelatedRun, listRunsByAction, readExactRun } from './postgresRuns';
+import { findCorrelatedRun, readExactRun } from './postgresRuns';
 import {
-  listOwnedPostgresConnections,
+  listResourcePostgresConnections,
   readOwnedPostgresConnection,
   samePostgresConnectionTarget,
   type PostgresConnectionTarget,
@@ -32,6 +31,8 @@ const record = (value: unknown): value is Record<string, unknown> =>
 export interface DeleteConnectionChoice {
   id: string;
   access: AccessRequest;
+  origin?: 'managed' | 'existing' | null;
+  cleanup?: 'role-only' | 'role-and-database';
 }
 export interface DeleteConnectionApprovalContext {
   callingManagerId: string;
@@ -74,8 +75,30 @@ async function resources(caller: RPCCaller): Promise<PostgresInstallation> {
   if (found.length !== 1) throw new PostgresRecoveryRequiredError();
   return readPostgresInstallation(caller, found[0]);
 }
-function choiceOf(target: PostgresConnectionTarget): DeleteConnectionChoice {
-  return { id: target.id, access: structuredClone(target.access) };
+function choiceOf(
+  target: PostgresConnectionTarget,
+  resourceConnections: PostgresConnectionTarget[],
+): DeleteConnectionChoice {
+  return {
+    id: target.id,
+    access: structuredClone(target.access),
+    origin: target.origin,
+    cleanup: deletionCleanup(target, resourceConnections),
+  };
+}
+
+export function deletionCleanup(
+  target: PostgresConnectionTarget,
+  resourceConnections: PostgresConnectionTarget[],
+): 'role-only' | 'role-and-database' {
+  if (target.access.scope !== 'database' || target.origin !== 'managed') return 'role-only';
+  const database = target.access.database;
+  const peers = resourceConnections.filter(
+    (candidate) =>
+      candidate.id !== target.id &&
+      candidate.access.scope === 'database' && candidate.access.database === database,
+  );
+  return peers.length === 0 ? 'role-and-database' : 'role-only';
 }
 function rpcStatus(value: unknown): number | null {
   return record(value) && typeof value.status === 'number' ? value.status : null;
@@ -127,28 +150,6 @@ function cleanupMatchesTarget(
     recordValue.platform.data.network === target.platform.data.network
   );
 }
-async function matchingCleanupRuns(
-  caller: RPCCaller,
-  target: PostgresConnectionTarget,
-): Promise<CleanupRunRecord[]> {
-  const matches: CleanupRunRecord[] = [];
-  for (const summary of await listRunsByAction(caller, 'cleanup-connection')) {
-    let note;
-    try {
-      note = parseConnectionNote(summary.note);
-    } catch {
-      throw new PostgresRecoveryRequiredError();
-    }
-    if (note.kind !== 'cleanup') throw new PostgresRecoveryRequiredError();
-    if (note.callerId !== target.managerId || note.resourceId !== target.resourceId) continue;
-    const parsed = parseCleanupRun(await readExactRun(caller, summary.id));
-    if (parsed.login.username !== target.username) continue;
-    if (!cleanupMatchesTarget(parsed, target))
-      throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
-    matches.push(parsed);
-  }
-  return matches;
-}
 
 async function waitAndValidateCleanup(
   deps: DeleteConnectionWorkflowDeps,
@@ -172,15 +173,8 @@ async function reconcileOrRunCleanup(
   deps: DeleteConnectionWorkflowDeps,
   installation: PostgresInstallation,
   target: PostgresConnectionTarget,
+  cleanup: 'role-only' | 'role-and-database',
 ): Promise<void> {
-  const matches = await matchingCleanupRuns(deps.caller, target);
-  if (matches.length > 1) throw new PostgresRecoveryRequiredError();
-  if (matches.length === 1) {
-    const match = matches[0];
-    if (match.status === 3) throw new Error('PostgreSQL connection cleanup failed');
-    if (match.status < 2) await waitAndValidateCleanup(deps, match.runId, target);
-    return;
-  }
   const identity = {
     operationId: (deps.generateOperationId ?? operationId)(),
     callerId: target.managerId,
@@ -189,7 +183,10 @@ async function reconcileOrRunCleanup(
   const metadata = buildCleanupPlan({
     administrator: installation.credentials,
     login: { username: target.username, password: target.password },
-    access: target.access,
+    access:
+      target.access.scope === 'database' && cleanup === 'role-only'
+        ? { ...target.access, operation: 'existing' }
+        : target.access,
     resourceId: target.resourceId,
     platform: target.platform,
   });
@@ -205,43 +202,12 @@ export async function deletePostgresConnection(
   if (!nonBlank(request.currentManagerId) || !nonBlank(request.callingManagerId))
     throw new PostgresRequestError(400, 'A calling manager is required');
   const installation = await resources(deps.caller);
-  let owned: PostgresConnectionTarget[];
-  if (request.metadata.connectionId !== null) {
-    let probe: unknown;
-    try {
-      probe = await deps.caller.getConnection(request.metadata.connectionId, {
-        include_labels: true,
-      });
-    } catch (error) {
-      if (rpcStatus(error) === 404) probe = null;
-      else throw new Error('PostgreSQL connection lookup failed');
-    }
-    if (probe === null) {
-      owned = [];
-    } else if (
-      record(probe) &&
-      record(probe.connection) &&
-      (probe.connection.manager !== request.callingManagerId ||
-        probe.connection.resource !== installation.resource.id ||
-        probe.connection.external !== false)
-    ) {
-      owned = [];
-    } else {
-      owned = await listOwnedPostgresConnections(
-        deps.caller,
-        request.callingManagerId,
-        installation.resource.id,
-        installation.platform,
-      );
-    }
-  } else {
-    owned = await listOwnedPostgresConnections(
-      deps.caller,
-      request.callingManagerId,
-      installation.resource.id,
-      installation.platform,
-    );
-  }
+  const resourceConnections = await listResourcePostgresConnections(
+    deps.caller,
+    installation.resource.id,
+    installation.platform,
+  );
+  const owned = resourceConnections.filter((target) => target.managerId === request.callingManagerId);
   const candidates =
     request.metadata.connectionId === null
       ? owned
@@ -251,13 +217,23 @@ export async function deletePostgresConnection(
   const decision = await deps.requestApproval({
     callingManagerId: request.callingManagerId,
     requestedConnectionId: request.metadata.connectionId,
-    choices: candidates.map(choiceOf),
+    choices: candidates.map((target) => choiceOf(target, resourceConnections)),
   });
   if (!decision || decision.allowed !== true)
     throw new PostgresRequestError(499, 'PostgreSQL connection deletion was cancelled');
   const approved = candidates.find((target) => target.id === decision.connectionId);
   if (!approved)
     throw new PostgresRequestError(400, 'Invalid PostgreSQL connection deletion approval');
+  const freshConnections = await listResourcePostgresConnections(
+    deps.caller,
+    installation.resource.id,
+    installation.platform,
+  );
+  const freshTarget = freshConnections.find((target) => target.id === approved.id);
+  if (!freshTarget || !samePostgresConnectionTarget(approved, freshTarget))
+    throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
+  if (deletionCleanup(approved, resourceConnections) !== deletionCleanup(freshTarget, freshConnections))
+    throw new PostgresRequestError(409, 'PostgreSQL connection deletion consequences changed');
   const beforeCleanup = await readOwnedPostgresConnection(
     deps.caller,
     approved.id,
@@ -267,7 +243,7 @@ export async function deletePostgresConnection(
   );
   if (!beforeCleanup || !samePostgresConnectionTarget(approved, beforeCleanup))
     throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
-  await reconcileOrRunCleanup(deps, installation, approved);
+  await reconcileOrRunCleanup(deps, installation, approved, deletionCleanup(approved, resourceConnections));
   const beforeDelete = await readOwnedPostgresConnection(
     deps.caller,
     approved.id,

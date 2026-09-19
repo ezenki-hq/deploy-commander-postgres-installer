@@ -181,18 +181,18 @@ export function ConnectionApprovalDialog({
                   </label>
                 </div>
               </fieldset>
-              {operation === 'existing' && context.catalogDatabases.length > 0 && (
+              {operation === 'existing' && (context.databaseSuggestions ?? context.catalogDatabases ?? []).length > 0 && (
                 <label className="block text-sm text-slate-700">
                   <span className="font-semibold">Available database</span>
                   <select
                     aria-label="Available database"
-                    value={context.catalogDatabases.includes(database) ? database : ''}
+                    value={(context.databaseSuggestions ?? context.catalogDatabases ?? []).includes(database) ? database : ''}
                     disabled={busy}
                     onChange={(event) => setDatabase(event.target.value)}
                     className="mt-2 block min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
                   >
                     <option value="">Choose a catalog database</option>
-                    {context.catalogDatabases.map((name) => (
+                    {(context.databaseSuggestions ?? context.catalogDatabases ?? []).map((name) => (
                       <option key={name} value={name}>
                         {name}
                       </option>
