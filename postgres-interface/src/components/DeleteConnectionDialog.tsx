@@ -18,7 +18,7 @@ function description(choice: DeleteConnectionApprovalContext['choices'][number])
 }
 
 function deletesDatabase(choice: DeleteConnectionApprovalContext['choices'][number]): boolean {
-  return choice.access.scope === 'database' && choice.access.operation === 'create';
+  return choice.cleanup === 'role-and-database';
 }
 
 export default function DeleteConnectionDialog({
