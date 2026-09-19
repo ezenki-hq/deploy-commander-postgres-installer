@@ -11,9 +11,11 @@ export type LifecycleAction = 'install' | 'teardown' | null;
 export interface ManagerDashboardProps {
   lifecycle: PostgresLifecycle;
   resource: RPC.ResourceItem | null;
-  resourceCompatible: boolean;
   resourceAmbiguous: boolean;
-  resourceContradiction: boolean;
+  /** @deprecated compatibility with older host shells. */
+  resourceCompatible?: boolean;
+  /** @deprecated compatibility with older host shells. */
+  resourceContradiction?: boolean;
   activeAction: LifecycleAction;
   error: string | null;
   onInstall: () => void;
@@ -24,9 +26,7 @@ export interface ManagerDashboardProps {
 export default function ManagerDashboard({
   lifecycle,
   resource,
-  resourceCompatible,
   resourceAmbiguous,
-  resourceContradiction,
   activeAction,
   error,
   onInstall,
@@ -42,8 +42,7 @@ export default function ManagerDashboard({
     setTeardownSubmitted(false);
     setConfirmingTeardown(true);
   };
-  const warning =
-    resourceAmbiguous || resourceContradiction || (hasResource && !resourceCompatible);
+  const warning = resourceAmbiguous;
 
   let badge: { label: string; tone: ShellBadgeTone };
   if (warning || lifecycle.kind === 'installation-failed' || lifecycle.kind === 'teardown-failed')
@@ -72,29 +71,6 @@ export default function ManagerDashboard({
         Multiple PostgreSQL resources were found. Teardown and reinstall are required.
       </StatusPanel>
     );
-  else if (resourceContradiction)
-    content = (
-      <StatusPanel
-        tone="danger"
-        eyebrow="Attention required"
-        title="PostgreSQL state needs recovery"
-        role="alert"
-        actions={
-          canTeardown ? (
-            <ActionButton tone="danger" onClick={requestTeardown}>
-              Teardown PostgreSQL
-            </ActionButton>
-          ) : (
-            <ActionButton tone="secondary" onClick={onRetry}>
-              Retry recovery
-            </ActionButton>
-          )
-        }
-      >
-        The latest lifecycle run contradicts the discovered PostgreSQL resource. Resolve this state
-        before continuing.
-      </StatusPanel>
-    );
   else if (warning)
     content = (
       <StatusPanel
@@ -114,8 +90,7 @@ export default function ManagerDashboard({
           )
         }
       >
-        The discovered resource is not compatible with the PostgreSQL installation contract.
-        Teardown is available to safely recover it.
+        Multiple PostgreSQL resources were found. Teardown and reinstall are required.
       </StatusPanel>
     );
   else if (activeAction === 'install' || lifecycle.kind === 'installing')

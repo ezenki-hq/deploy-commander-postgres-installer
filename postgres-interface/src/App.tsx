@@ -17,7 +17,7 @@ import {
   parseDeleteConnectionRequest,
   type ParsedDeleteConnectionRequest,
 } from './lib/postgresDeleteRequest';
-import { listPostgresResources, readPostgresInstallation } from './lib/postgresResource';
+import { listPostgresResources } from './lib/postgresResource';
 import { readPostgresLifecycle, type PostgresLifecycle } from './lib/postgresRuns';
 import { installPostgres, teardownPostgres } from './lib/lifecycleActions';
 
@@ -30,9 +30,7 @@ type DashboardView = {
   manager: string;
   lifecycle: PostgresLifecycle;
   resource: RPC.ResourceItem | null;
-  compatible: boolean;
   ambiguous: boolean;
-  contradiction: boolean;
   error: string | null;
 };
 type CreateConnectionView = {
@@ -182,29 +180,12 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
         listPostgresResources(client.caller),
       ]);
       const resource = resources.length === 1 ? resources[0] : null;
-      let compatible = false;
-      if (resource) {
-        try {
-          await readPostgresInstallation(client.caller, resource);
-          compatible = true;
-        } catch {
-          compatible = false;
-        }
-      }
-      const contradiction =
-        (lifecycle.kind === 'installed' && resources.length === 0) ||
-        (resources.length === 1 &&
-          (lifecycle.kind === 'not-installed' ||
-            lifecycle.kind === 'installing' ||
-            lifecycle.kind === 'tearing-down'));
       return {
         kind: 'dashboard',
         manager,
         lifecycle,
         resource,
-        compatible,
         ambiguous: resources.length > 1,
-        contradiction,
         error: null,
       };
     };
@@ -306,9 +287,7 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
     <ManagerDashboard
       lifecycle={view.lifecycle}
       resource={view.resource}
-      resourceCompatible={view.compatible}
       resourceAmbiguous={view.ambiguous}
-      resourceContradiction={view.contradiction}
       activeAction={action}
       error={actionError ?? view.error}
       onInstall={() =>
