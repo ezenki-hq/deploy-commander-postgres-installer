@@ -29,12 +29,14 @@
 ### Task 1: Shared Operational Console Primitives
 
 **Files:**
+
 - Create: `postgres-interface/src/components/ActionButton.tsx`
 - Create: `postgres-interface/src/components/ManagerShell.tsx`
 - Create: `postgres-interface/src/components/StatusPanel.tsx`
 - Create: `postgres-interface/src/components/OperationalUI.test.tsx`
 
 **Interfaces:**
+
 - Consumes: React button and node types; Tailwind utility classes.
 - Produces: `ActionButton`, `ManagerShell`, `StatusPanel`, and their exported prop/tone types.
 
@@ -93,7 +95,9 @@ describe('operational console primitives', () => {
     expect(action).not.toHaveBeenCalled();
 
     view.rerender(
-      <ActionButton tone="primary" onClick={action}>Install PostgreSQL</ActionButton>,
+      <ActionButton tone="primary" onClick={action}>
+        Install PostgreSQL
+      </ActionButton>,
     );
     await user.click(screen.getByRole('button', { name: 'Install PostgreSQL' }));
     expect(action).toHaveBeenCalledOnce();
@@ -124,21 +128,29 @@ export interface ActionButtonProps extends ButtonHTMLAttributes<HTMLButtonElemen
 }
 
 const toneClasses: Record<ActionTone, string> = {
-  primary: 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-indigo-600',
-  secondary: 'border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-slate-500',
+  primary:
+    'bg-indigo-600 text-white shadow-sm hover:bg-indigo-500 focus-visible:outline-indigo-600',
+  secondary:
+    'border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline-slate-500',
   danger: 'bg-rose-600 text-white shadow-sm hover:bg-rose-500 focus-visible:outline-rose-600',
 };
 
 export default function ActionButton({
-  tone = 'primary', className = '', type = 'button', children, ...props
+  tone = 'primary',
+  className = '',
+  type = 'button',
+  children,
+  ...props
 }: ActionButtonProps) {
-  return <button
-    type={type}
-    className={`inline-flex min-h-11 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none ${toneClasses[tone]} ${className}`}
-    {...props}
-  >
-    {children}
-  </button>;
+  return (
+    <button
+      type={type}
+      className={`inline-flex min-h-11 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none ${toneClasses[tone]} ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
 }
 ```
 
@@ -165,21 +177,33 @@ const badgeClasses: Record<ShellBadgeTone, string> = {
 };
 
 export default function ManagerShell({ children, badge }: ManagerShellProps) {
-  return <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 sm:py-10 lg:px-8">
-    <div className="mx-auto w-full max-w-5xl">
-      <header className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-600">Deploy Commander</p>
-          <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">PostgreSQL manager</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Manage the shared PostgreSQL service and its logical database connections.</p>
-        </div>
-        {badge && <span className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${badgeClasses[badge.tone]}`}>
-          {badge.label}
-        </span>}
-      </header>
-      {children}
-    </div>
-  </main>;
+  return (
+    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 sm:py-10 lg:px-8">
+      <div className="mx-auto w-full max-w-5xl">
+        <header className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-indigo-600">
+              Deploy Commander
+            </p>
+            <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">
+              PostgreSQL manager
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Manage the shared PostgreSQL service and its logical database connections.
+            </p>
+          </div>
+          {badge && (
+            <span
+              className={`w-fit rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset ${badgeClasses[badge.tone]}`}
+            >
+              {badge.label}
+            </span>
+          )}
+        </header>
+        {children}
+      </div>
+    </main>
+  );
 }
 ```
 
@@ -217,23 +241,41 @@ const eyebrowClasses: Record<StatusTone, string> = {
 };
 
 export default function StatusPanel({
-  tone, title, eyebrow, badge, children, actions, role,
+  tone,
+  title,
+  eyebrow,
+  badge,
+  children,
+  actions,
+  role,
 }: StatusPanelProps) {
-  return <section
-    role={role}
-    aria-live={role === 'status' ? 'polite' : undefined}
-    className={`rounded-2xl border p-5 shadow-sm sm:p-7 ${panelClasses[tone]}`}
-  >
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
-        {eyebrow && <p className={`text-xs font-bold uppercase tracking-[0.16em] ${eyebrowClasses[tone]}`}>{eyebrow}</p>}
-        <h2 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
+  return (
+    <section
+      role={role}
+      aria-live={role === 'status' ? 'polite' : undefined}
+      className={`rounded-2xl border p-5 shadow-sm sm:p-7 ${panelClasses[tone]}`}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          {eyebrow && (
+            <p className={`text-xs font-bold uppercase tracking-[0.16em] ${eyebrowClasses[tone]}`}>
+              {eyebrow}
+            </p>
+          )}
+          <h2 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{title}</h2>
+        </div>
+        {badge && (
+          <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+            {badge}
+          </span>
+        )}
       </div>
-      {badge && <span className="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{badge}</span>}
-    </div>
-    <div className="mt-4 text-sm leading-6 text-slate-600">{children}</div>
-    {actions && <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">{actions}</div>}
-  </section>;
+      <div className="mt-4 text-sm leading-6 text-slate-600">{children}</div>
+      {actions && (
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">{actions}</div>
+      )}
+    </section>
+  );
 }
 ```
 
@@ -253,11 +295,13 @@ Expected: tests PASS, ESLint exits zero, and the commit succeeds.
 ### Task 2: Explicit Lifecycle Progress and Redesigned Dashboard
 
 **Files:**
+
 - Modify: `postgres-interface/src/App.tsx:79-198`
 - Modify: `postgres-interface/src/components/ManagerDashboard.tsx:4-140`
 - Modify: `postgres-interface/src/components/ManagerDashboard.test.tsx:19-95`
 
 **Interfaces:**
+
 - Consumes: `ManagerShell`, `StatusPanel`, and `ActionButton` from Task 1.
 - Produces: `LifecycleAction = 'install' | 'teardown' | null` and `ManagerDashboardProps.activeAction`.
 
@@ -316,13 +360,27 @@ Handle action progress before error/recovery branches:
 
 ```tsx
 if (activeAction === 'install') {
-  content = <StatusPanel tone="progress" eyebrow="Installation in progress" title="Installing PostgreSQL" role="status">
-    The shared service and persistent storage are being prepared. This can take a few minutes.
-  </StatusPanel>;
+  content = (
+    <StatusPanel
+      tone="progress"
+      eyebrow="Installation in progress"
+      title="Installing PostgreSQL"
+      role="status"
+    >
+      The shared service and persistent storage are being prepared. This can take a few minutes.
+    </StatusPanel>
+  );
 } else if (activeAction === 'teardown') {
-  content = <StatusPanel tone="progress" eyebrow="Teardown in progress" title="Tearing down PostgreSQL" role="status">
-    The shared service and its logical databases are being removed safely.
-  </StatusPanel>;
+  content = (
+    <StatusPanel
+      tone="progress"
+      eyebrow="Teardown in progress"
+      title="Tearing down PostgreSQL"
+      role="status"
+    >
+      The shared service and its logical databases are being removed safely.
+    </StatusPanel>
+  );
 }
 ```
 
@@ -346,7 +404,9 @@ Inside the ready panel, use this non-secret detail grid:
     <dd className="mt-1 break-all font-mono text-sm text-slate-800">{resource?.id}</dd>
   </div>
   <div>
-    <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Connection approval</dt>
+    <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+      Connection approval
+    </dt>
     <dd className="mt-1 text-sm text-slate-800">
       {permissionRemembered ? 'Remembered for this installation' : 'Requested for each caller'}
     </dd>
@@ -435,6 +495,7 @@ Expected: focused tests PASS, errors render once, and ESLint exits zero.
 ### Task 3: Accessible Teardown Confirmation
 
 **Files:**
+
 - Create: `postgres-interface/src/components/useDialogFocus.ts`
 - Create: `postgres-interface/src/components/ConfirmDialog.tsx`
 - Create: `postgres-interface/src/components/ConfirmDialog.test.tsx`
@@ -442,6 +503,7 @@ Expected: focused tests PASS, errors render once, and ESLint exits zero.
 - Modify: `postgres-interface/src/components/ManagerDashboard.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `ActionButton` and `LifecycleAction`.
 - Produces: `useDialogFocus<T extends HTMLElement>(canDismiss: boolean, onDismiss: () => void): RefObject<T | null>` and `ConfirmDialog`.
 
@@ -463,8 +525,10 @@ describe('ConfirmDialog', () => {
     const onConfirm = vi.fn();
     render(<ConfirmDialog busy={false} onCancel={vi.fn()} onConfirm={onConfirm} />);
 
-    expect(screen.getByRole('dialog', { name: 'Teardown PostgreSQL?' }))
-      .toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByRole('dialog', { name: 'Teardown PostgreSQL?' })).toHaveAttribute(
+      'aria-modal',
+      'true',
+    );
     expect(screen.getByText(/shared service and its logical databases/i)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Confirm teardown' }));
     expect(onConfirm).toHaveBeenCalledOnce();
@@ -477,9 +541,7 @@ describe('ConfirmDialog', () => {
     document.body.append(opener);
     opener.focus();
     const onCancel = vi.fn();
-    const view = render(
-      <ConfirmDialog busy={false} onCancel={onCancel} onConfirm={vi.fn()} />,
-    );
+    const view = render(<ConfirmDialog busy={false} onCancel={onCancel} onConfirm={vi.fn()} />);
 
     expect(screen.getByRole('dialog')).toHaveFocus();
     await user.tab();
@@ -540,15 +602,17 @@ export default function useDialogFocus<T extends HTMLElement>(
   const canDismissRef = useRef(canDismiss);
   const dismissRef = useRef(onDismiss);
 
-  useEffect(() => { canDismissRef.current = canDismiss; }, [canDismiss]);
-  useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
+  useEffect(() => {
+    canDismissRef.current = canDismiss;
+  }, [canDismiss]);
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return undefined;
-    const previous = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -560,9 +624,7 @@ export default function useDialogFocus<T extends HTMLElement>(
         return;
       }
       if (event.key !== 'Tab') return;
-      const elements = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      );
+      const elements = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
       if (elements.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -608,29 +670,44 @@ export interface ConfirmDialogProps {
 export default function ConfirmDialog({ busy, onConfirm, onCancel }: ConfirmDialogProps) {
   const dialogRef = useDialogFocus<HTMLDivElement>(!busy, onCancel);
 
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-    <div
-      ref={dialogRef}
-      role="dialog"
-      aria-modal="true"
-      aria-busy={busy}
-      tabIndex={-1}
-      aria-labelledby="teardown-dialog-title"
-      aria-describedby="teardown-dialog-description"
-      className="w-full max-w-lg rounded-2xl border border-rose-100 bg-white p-6 shadow-2xl outline-none sm:p-7"
-    >
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-rose-700">Destructive action</p>
-      <h2 id="teardown-dialog-title" className="mt-2 text-2xl font-semibold tracking-tight">Teardown PostgreSQL?</h2>
-      <p id="teardown-dialog-description" className="mt-3 text-sm leading-6 text-slate-600">
-        The shared PostgreSQL service and its logical databases will be removed. This action cannot be undone from this manager.
-      </p>
-      {busy && <p role="status" aria-live="polite" className="mt-4 text-sm font-medium text-rose-700">Starting teardown…</p>}
-      <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-        <ActionButton tone="secondary" disabled={busy} onClick={onCancel}>Cancel</ActionButton>
-        <ActionButton tone="danger" disabled={busy} onClick={onConfirm}>Confirm teardown</ActionButton>
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-busy={busy}
+        tabIndex={-1}
+        aria-labelledby="teardown-dialog-title"
+        aria-describedby="teardown-dialog-description"
+        className="w-full max-w-lg rounded-2xl border border-rose-100 bg-white p-6 shadow-2xl outline-none sm:p-7"
+      >
+        <p className="text-xs font-bold uppercase tracking-[0.16em] text-rose-700">
+          Destructive action
+        </p>
+        <h2 id="teardown-dialog-title" className="mt-2 text-2xl font-semibold tracking-tight">
+          Teardown PostgreSQL?
+        </h2>
+        <p id="teardown-dialog-description" className="mt-3 text-sm leading-6 text-slate-600">
+          The shared PostgreSQL service and its logical databases will be removed. This action
+          cannot be undone from this manager.
+        </p>
+        {busy && (
+          <p role="status" aria-live="polite" className="mt-4 text-sm font-medium text-rose-700">
+            Starting teardown…
+          </p>
+        )}
+        <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          <ActionButton tone="secondary" disabled={busy} onClick={onCancel}>
+            Cancel
+          </ActionButton>
+          <ActionButton tone="danger" disabled={busy} onClick={onConfirm}>
+            Confirm teardown
+          </ActionButton>
+        </div>
       </div>
     </div>
-  </div>;
+  );
 }
 ```
 
@@ -661,18 +738,22 @@ The danger action opens the dialog:
 Render beside the selected status panel:
 
 ```tsx
-{confirmingTeardown && <ConfirmDialog
-  busy={teardownSubmitted}
-  onCancel={() => {
-    if (!teardownSubmitted) setConfirmingTeardown(false);
-  }}
-  onConfirm={() => {
-    if (teardownSubmitted) return;
-    setTeardownSubmitted(true);
-    onTeardown();
-    setConfirmingTeardown(false);
-  }}
-/>}
+{
+  confirmingTeardown && (
+    <ConfirmDialog
+      busy={teardownSubmitted}
+      onCancel={() => {
+        if (!teardownSubmitted) setConfirmingTeardown(false);
+      }}
+      onConfirm={() => {
+        if (teardownSubmitted) return;
+        setTeardownSubmitted(true);
+        onTeardown();
+        setConfirmingTeardown(false);
+      }}
+    />
+  );
+}
 ```
 
 Update dashboard tests: clicking `Teardown PostgreSQL` must make the dialog
@@ -695,12 +776,14 @@ Expected: focused tests PASS and ESLint exits zero.
 ### Task 4: Cohesive Permission and Connection Experience
 
 **Files:**
+
 - Modify: `postgres-interface/src/components/PermissionDialog.tsx:1-124`
 - Modify: `postgres-interface/src/components/PermissionDialog.test.tsx:1-150`
 - Modify: `postgres-interface/src/components/ConnectionRequest.tsx:126-146`
 - Modify: `postgres-interface/src/components/ConnectionRequest.test.tsx:1-143`
 
 **Interfaces:**
+
 - Consumes: `ManagerShell`, `StatusPanel`, `ActionButton`, and `useDialogFocus`.
 - Produces: shared-shell connection progress and a restyled permission dialog with unchanged decision semantics.
 
@@ -768,36 +851,40 @@ checkbox `h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600
 Replace the bare status return with:
 
 ```tsx
-const progress = <ManagerShell badge={{ label: 'Connecting', tone: 'progress' }}>
-  <StatusPanel
-    tone="progress"
-    eyebrow="Logical database request"
-    title={busy ? 'Creating PostgreSQL connection' : 'Preparing PostgreSQL connection'}
-    role="status"
-  >
-    The manager is validating the installation and preparing isolated database credentials.
-  </StatusPanel>
-</ManagerShell>;
+const progress = (
+  <ManagerShell badge={{ label: 'Connecting', tone: 'progress' }}>
+    <StatusPanel
+      tone="progress"
+      eyebrow="Logical database request"
+      title={busy ? 'Creating PostgreSQL connection' : 'Preparing PostgreSQL connection'}
+      role="status"
+    >
+      The manager is validating the installation and preparing isolated database credentials.
+    </StatusPanel>
+  </ManagerShell>
+);
 
 if (prompt) {
-  return <>
-    {progress}
-    <PermissionDialog
-      callerId={callingManagerId ?? ''}
-      busy={busy}
-      onAllow={(remember) => {
-        pendingRef.current?.({ allowed: true, remember });
-        pendingRef.current = null;
-        setPrompt(false);
-        setBusy(true);
-      }}
-      onCancel={() => {
-        pendingRef.current?.({ allowed: false, remember: false });
-        pendingRef.current = null;
-        setPrompt(false);
-      }}
-    />
-  </>;
+  return (
+    <>
+      {progress}
+      <PermissionDialog
+        callerId={callingManagerId ?? ''}
+        busy={busy}
+        onAllow={(remember) => {
+          pendingRef.current?.({ allowed: true, remember });
+          pendingRef.current = null;
+          setPrompt(false);
+          setBusy(true);
+        }}
+        onCancel={() => {
+          pendingRef.current?.({ allowed: false, remember: false });
+          pendingRef.current = null;
+          setPrompt(false);
+        }}
+      />
+    </>
+  );
 }
 return progress;
 ```
@@ -819,12 +906,14 @@ ESLint exits zero.
 ### Task 5: Loading, Fatal Failure, and Global Surface Polish
 
 **Files:**
+
 - Modify: `postgres-interface/src/App.tsx`
 - Modify: `postgres-interface/src/App.test.tsx`
 - Modify: `postgres-interface/src/index.css:1-33`
 - Modify: `postgres-interface/src/App.css:1-3`
 
 **Interfaces:**
+
 - Consumes: `ManagerShell`, `StatusPanel`, `ActionButton`, and the reliability plan's `requestRefresh` behavior.
 - Produces: shared-shell loading and fatal failure views plus the final global surface.
 
@@ -851,11 +940,12 @@ it('renders fatal storage failure once in the manager shell', async () => {
   });
 
   render(<App createClient={() => current} />);
-  expect(await screen.findByRole('heading', {
-    name: 'Manager storage is unavailable',
-  })).toBeVisible();
-  expect(screen.getAllByText('Unable to initialize PostgreSQL manager storage'))
-    .toHaveLength(1);
+  expect(
+    await screen.findByRole('heading', {
+      name: 'Manager storage is unavailable',
+    }),
+  ).toBeVisible();
+  expect(screen.getAllByText('Unable to initialize PostgreSQL manager storage')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   expect(screen.queryByText('private')).not.toBeInTheDocument();
 });
@@ -876,30 +966,38 @@ returns with:
 
 ```tsx
 if (!current) {
-  return <ManagerShell badge={{ label: 'Loading', tone: 'progress' }}>
-    <StatusPanel
-      tone="progress"
-      eyebrow="Manager startup"
-      title="Loading manager state"
-      role="status"
-    >
-      Checking PostgreSQL installation and recovery state.
-    </StatusPanel>
-  </ManagerShell>;
+  return (
+    <ManagerShell badge={{ label: 'Loading', tone: 'progress' }}>
+      <StatusPanel
+        tone="progress"
+        eyebrow="Manager startup"
+        title="Loading manager state"
+        role="status"
+      >
+        Checking PostgreSQL installation and recovery state.
+      </StatusPanel>
+    </ManagerShell>
+  );
 }
 
 if (view.kind === 'error') {
-  return <ManagerShell badge={{ label: 'Unavailable', tone: 'danger' }}>
-    <StatusPanel
-      tone="danger"
-      eyebrow="Manager startup"
-      title="Manager storage is unavailable"
-      role="alert"
-      actions={<ActionButton tone="secondary" onClick={requestRefresh}>Retry</ActionButton>}
-    >
-      {view.message}
-    </StatusPanel>
-  </ManagerShell>;
+  return (
+    <ManagerShell badge={{ label: 'Unavailable', tone: 'danger' }}>
+      <StatusPanel
+        tone="danger"
+        eyebrow="Manager startup"
+        title="Manager storage is unavailable"
+        role="alert"
+        actions={
+          <ActionButton tone="secondary" onClick={requestRefresh}>
+            Retry
+          </ActionButton>
+        }
+      >
+        {view.message}
+      </StatusPanel>
+    </ManagerShell>
+  );
 }
 ```
 
@@ -913,10 +1011,17 @@ Keep `@import "tailwindcss";` first and replace the remaining `index.css` base
 rules with:
 
 ```css
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   color: #0f172a;
   background: #f8fafc;
   font-synthesis: none;
@@ -1003,9 +1108,11 @@ git commit -m "feat: complete PostgreSQL operational console"
 ### Task 6: Final Console Verification
 
 **Files:**
+
 - Verify only; modify files only to correct a failure caused by Tasks 1-5.
 
 **Interfaces:**
+
 - Consumes: all operational-console deliverables.
 - Produces: a review-ready console branch.
 
