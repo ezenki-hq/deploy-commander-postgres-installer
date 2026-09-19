@@ -38,14 +38,12 @@ type DashboardView = {
 type CreateConnectionView = {
   kind: 'create-connection';
   manager: string;
-  callerId: string | null;
   metadata: ParsedConnectionRequest;
   error: string | null;
 };
 type DeleteConnectionView = {
   kind: 'delete-connection';
   manager: string;
-  callerId: string | null;
   metadata: ParsedDeleteConnectionRequest;
   error: string | null;
 };
@@ -138,15 +136,13 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       const metadata = await client.caller.getMetadata();
       const action = childAction(metadata);
       if (action) {
-        const caller = managerId(await client.caller.getCallingManager().catch(() => null));
         if (action === 'delete-connection') {
           try {
             const next: DeleteConnectionView = {
               kind: 'delete-connection',
               manager,
-              callerId: caller,
               metadata: parseDeleteConnectionRequest(metadata),
-              error: caller ? null : 'A calling manager is required',
+              error: null,
             };
             connectionViewRef.current = next;
             return next;
@@ -154,7 +150,6 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
             const next: DeleteConnectionView = {
               kind: 'delete-connection',
               manager,
-              callerId: caller,
               metadata: EMPTY_DELETE_REQUEST,
               error: 'Invalid PostgreSQL connection deletion request',
             };
@@ -166,9 +161,8 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
           const next: CreateConnectionView = {
             kind: 'create-connection',
             manager,
-            callerId: caller,
             metadata: parseConnectionRequest(metadata),
-            error: caller ? null : 'A calling manager is required',
+            error: null,
           };
           connectionViewRef.current = next;
           return next;
@@ -176,7 +170,6 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
           const next: CreateConnectionView = {
             kind: 'create-connection',
             manager,
-            callerId: caller,
             metadata: EMPTY_CONNECTION_REQUEST,
             error: 'Invalid PostgreSQL connection request',
           };
@@ -273,7 +266,6 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
         events={client.events}
         wire={client.wire}
         currentManagerId={view.manager}
-        callingManagerId={view.callerId}
         metadata={view.metadata}
         initialError={view.error}
       />
@@ -285,7 +277,6 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
         events={client.events}
         wire={client.wire}
         currentManagerId={view.manager}
-        callingManagerId={view.callerId}
         metadata={view.metadata}
         initialError={view.error}
       />

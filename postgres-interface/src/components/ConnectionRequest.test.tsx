@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { RPCCaller, RPC, Wire } from '@ezenki/deploy-commander-installer-interface';
 import ConnectionRequest from './ConnectionRequest';
@@ -24,7 +24,6 @@ function baseProps(caller: RPCCaller, wire: Wire) {
     wire,
     events: createRunEventSource(),
     currentManagerId: 'postgres-manager',
-    callingManagerId: 'consumer-manager',
     resource,
   };
 }
@@ -63,6 +62,7 @@ function installedCaller() {
       }),
     ),
     getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
+    getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
     start: vi.fn().mockRejectedValue(new Error('transport unavailable')),
   } as unknown as RPCCaller;
   return caller;
@@ -78,11 +78,15 @@ describe('ConnectionRequest child errors', () => {
     ],
     ['Database access was cancelled', 499, 'Database access was cancelled'],
     ['PostgreSQL recovery is required', 503, 'PostgreSQL recovery is required'],
-  ])('maps %s to a fixed non-secret response', async (error, status, message) => {
+  ])('keeps %s visible until the user rejects it', async (error, status, message) => {
+    const user = userEvent.setup();
     const wire = { close: vi.fn() } as unknown as Wire;
 
     render(<ConnectionRequest {...baseProps({} as RPCCaller, wire)} initialError={error} />);
 
+    expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent(message);
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
     await waitFor(() =>
       expect(wire.close).toHaveBeenCalledWith({
         manager: 'postgres-manager',
@@ -93,6 +97,7 @@ describe('ConnectionRequest child errors', () => {
   });
 
   it('maps unexpected errors to a fixed non-secret 500 response', async () => {
+    const user = userEvent.setup();
     const wire = { close: vi.fn() } as unknown as Wire;
 
     render(
@@ -102,6 +107,8 @@ describe('ConnectionRequest child errors', () => {
       />,
     );
 
+    expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
     await waitFor(() =>
       expect(wire.close).toHaveBeenCalledWith({
         manager: 'postgres-manager',
@@ -114,6 +121,7 @@ describe('ConnectionRequest child errors', () => {
   it('maps an invalid authoritative platform connection to recovery-required', async () => {
     const wire = { close: vi.fn() } as unknown as Wire;
     const caller = {
+      getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
       getResource: vi.fn().mockResolvedValue({
         config: { platform_connection: { type: 'Platform', data: { network: '' } } },
       }),
@@ -121,13 +129,57 @@ describe('ConnectionRequest child errors', () => {
 
     render(<ConnectionRequest {...baseProps(caller, wire)} />);
 
-    await waitFor(() =>
-      expect(wire.close).toHaveBeenCalledWith({
+    expect(await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent(/calling manager|required/i);
+  });
+
+  it('shows a blocked gate instead of progress-only UI for initial errors', () => {
+    const wire = { close: vi.fn() } as unknown as Wire;
+    render(
+      <ConnectionRequest
+        {...baseProps({} as RPCCaller, wire)}
+        initialError="Invalid PostgreSQL connection request"
+      />,
+    );
+    expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid PostgreSQL connection request');
+  });
+
+  it('keeps the gate visible while caller lookup is pending', async () => {
+    let resolveCaller: (value: string | null) => void = () => undefined;
+    const callerRequest = new Promise<string | null>((resolve) => {
+      resolveCaller = resolve;
+    });
+    const wire = { close: vi.fn() } as unknown as Wire;
+    const caller = {
+      getCallingManager: vi.fn().mockReturnValue(callerRequest),
+      start: vi.fn(),
+    } as unknown as RPCCaller;
+    render(<ConnectionRequest {...baseProps(caller, wire)} />);
+    expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    expect(screen.getByRole('dialog')).toHaveTextContent('Identifying the calling manager');
+    expect(caller.start).not.toHaveBeenCalled();
+    resolveCaller('consumer-manager');
+  });
+
+  it('closes once when rejecting pending preparation', async () => {
+    const user = userEvent.setup();
+    const wire = { close: vi.fn() } as unknown as Wire;
+    const caller = {
+      getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
+      getMyResources: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      start: vi.fn(),
+    } as unknown as RPCCaller;
+    render(<ConnectionRequest {...baseProps(caller, wire)} />);
+    await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' });
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+    expect(caller.start).not.toHaveBeenCalled();
+    await waitFor(() => expect(wire.close).toHaveBeenCalledTimes(1));
+    expect(wire.close).toHaveBeenCalledWith({
         manager: 'postgres-manager',
         ok: false,
-        error: { status: 503, message: 'PostgreSQL recovery is required' },
-      }),
-    );
+        error: { status: 499, message: 'Database access was cancelled' },
+      });
   });
 });
 
@@ -166,9 +218,11 @@ describe('ConnectionRequest lifecycle', () => {
       />,
     );
 
-    await waitFor(() => expect(screen.getByRole('dialog')).toBeVisible());
+    await screen.findByRole('button', { name: 'Approve connection' });
     await user.click(screen.getByRole('radio', { name: /full access/i }));
-    await user.click(screen.getByRole('button', { name: 'Approve connection' }));
+    const approve = screen.getByRole('button', { name: 'Approve connection' });
+    fireEvent.click(approve);
+    fireEvent.click(approve);
     await waitFor(() =>
       expect(caller.start).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'create-connection' }),
@@ -219,15 +273,28 @@ describe('ConnectionRequest lifecycle', () => {
     expect(secondWire.close).not.toHaveBeenCalled();
   });
 
-  it('presents preparation in the PostgreSQL manager shell', () => {
+  it('shows the approval gate while preflight is pending and starts no run', async () => {
     const wire = { close: vi.fn() } as unknown as Wire;
+    const resourceRequest = new Promise(() => undefined);
     const caller = {
-      getResource: vi.fn().mockReturnValue(new Promise(() => undefined)),
+      getMyResources: vi.fn().mockResolvedValue({
+        items: [resource],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      }),
+      getResource: vi.fn().mockReturnValue(resourceRequest),
+      getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
+      start: vi.fn(),
     } as unknown as RPCCaller;
 
     render(<ConnectionRequest {...baseProps(caller, wire)} />);
     expect(screen.getByRole('heading', { name: 'PostgreSQL manager' })).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('Preparing PostgreSQL connection');
+    expect(screen.getAllByRole('status')[0]).toHaveTextContent('Preparing PostgreSQL connection');
+    expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
+    expect(screen.getByRole('dialog')).toHaveTextContent(/identifying|checking PostgreSQL/i);
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+    expect(caller.start).not.toHaveBeenCalled();
   });
 
   it('does not restart an active creation flow when rerendered with the same request', async () => {
@@ -241,6 +308,7 @@ describe('ConnectionRequest lifecycle', () => {
         .fn()
         .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
       getResource: vi.fn().mockReturnValue(resourceRequest),
+      getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
     } as unknown as RPCCaller;
     const props = baseProps(caller, wire);
     const view = render(<ConnectionRequest {...props} />);
@@ -293,6 +361,7 @@ describe('ConnectionRequest lifecycle', () => {
         .fn()
         .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
       getResource: vi.fn().mockReturnValue(resourceRequest),
+      getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
     } as unknown as RPCCaller;
     const view = render(<ConnectionRequest {...baseProps(caller, wire)} />);
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { RPC, RPCCaller, Wire } from '@ezenki/deploy-commander-installer-interface';
 import ConnectionApprovalDialog from './ConnectionApprovalDialog';
 import ManagerShell from './ManagerShell';
@@ -17,6 +17,12 @@ import {
   PostgresRequestError,
 } from '../lib/postgresErrors';
 import type { ParsedConnectionRequest } from '../lib/postgresConnectionRequest';
+import {
+  actionGateReducer,
+  initialActionGate,
+  type ActionGateFailure,
+  type ActionGateState,
+} from '../lib/actionGate';
 
 const EMPTY_METADATA: ParsedConnectionRequest = { access: null, labels: {} };
 
@@ -25,7 +31,6 @@ export interface ConnectionRequestProps {
   events: RunEventSource;
   wire: Wire;
   currentManagerId: string;
-  callingManagerId: string | null;
   /** Parsed child-interface metadata. Omitted values delegate configuration to the user. */
   metadata?: ParsedConnectionRequest;
   /** @deprecated ignored; retained for host compatibility during cutover. */
@@ -76,20 +81,37 @@ function errorResponse(error: unknown): { status: number; message: string } {
   return { status: 500, message: 'Unable to create the PostgreSQL connection' };
 }
 
+function managerId(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function gateFailure(error: unknown): ActionGateFailure {
+  const response = errorResponse(error);
+  return {
+    ...response,
+    retryable: response.status === 409 || response.status === 500 || response.status === 503,
+  };
+}
+
 export default function ConnectionRequest({
   caller,
   events,
   wire,
   currentManagerId,
-  callingManagerId,
   metadata = EMPTY_METADATA,
   initialError = null,
   initialResult = null,
 }: ConnectionRequestProps) {
   const closedRef = useRef(false);
   const pendingRef = useRef<((decision: ApprovalDecision) => void) | null>(null);
-  const [approval, setApproval] = useState<ApprovalContext | null>(null);
-  const [busy, setBusy] = useState(Boolean(initialResult));
+  const controllerRef = useRef<AbortController | null>(null);
+  const phaseRef = useRef<'preparing' | 'waiting' | 'approved' | 'rejected'>('preparing');
+  const [attempt, setAttempt] = useState(0);
+  const initialFailure = initialError ? gateFailure(new Error(initialError)) : null;
+  const [gate, dispatch] = useReducer(
+    actionGateReducer<ApprovalContext>,
+    initialActionGate<ApprovalContext>(initialFailure),
+  );
 
   const closeOnce = useCallback(
     (response: {
@@ -117,103 +139,123 @@ export default function ConnectionRequest({
       closeOnce({ ok: true, result: initialResult });
       return undefined;
     }
-    if (initialError) {
-      closeOnce({ ok: false, ...errorResponse(new Error(initialError)) });
-      return undefined;
-    }
-    if (!caller || !events || !wire || !callingManagerId) {
-      closeOnce({
-        ok: false,
-        status: callingManagerId ? 503 : 400,
-        message: callingManagerId
-          ? 'PostgreSQL recovery is required'
-          : 'A calling manager is required',
-      });
-      return undefined;
-    }
+    if (initialError || !caller || !events || !wire) return undefined;
+
     let active = true;
     const controller = new AbortController();
-    const requestApproval = (context: ApprovalContext) =>
-      new Promise<ApprovalDecision>((resolve) => {
-        pendingRef.current = resolve;
-        if (active) setApproval(context);
-      });
-    const run = async () =>
-      createPostgresConnection(
-        {
-          caller,
-          events,
-          requestApproval,
-          generateAdminCredentials,
-          generateCredentials: generateLoginCredentials,
-          waitForRun,
-          signal: controller.signal,
-        },
-        { currentManagerId, callingManagerId, metadata },
-      );
-    void run()
-      .then((result) => {
-        if (active) closeOnce({ ok: true, result });
-      })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return;
-        if (active) closeOnce({ ok: false, ...errorResponse(error) });
-      })
-      .finally(() => {
-        if (active) setBusy(false);
-      });
+    controllerRef.current = controller;
+
+    const run = async () => {
+      try {
+        let callingManagerId: string | null = null;
+        try {
+          callingManagerId = managerId(await caller.getCallingManager());
+        } catch {
+          callingManagerId = null;
+        }
+        if (!active) return;
+        if (!callingManagerId) {
+          dispatch({
+            type: 'blocked',
+            failure: { status: 400, message: 'A calling manager is required', retryable: false },
+          });
+          return;
+        }
+        dispatch({ type: 'identified', callerId: callingManagerId });
+        const requestApproval = (context: ApprovalContext) =>
+          new Promise<ApprovalDecision>((resolve) => {
+            pendingRef.current = resolve;
+            phaseRef.current = 'waiting';
+            if (active) dispatch({ type: 'prepared', callerId: callingManagerId, context });
+          });
+        const result = await createPostgresConnection(
+          {
+            caller,
+            events,
+            requestApproval,
+            generateAdminCredentials,
+            generateCredentials: generateLoginCredentials,
+            waitForRun,
+            signal: controller.signal,
+          },
+          { currentManagerId, callingManagerId, metadata },
+        );
+        if (active) {
+          dispatch({ type: 'complete' });
+          closeOnce({ ok: true, result });
+        }
+      } catch (error: unknown) {
+        if (!active || (error instanceof Error && error.name === 'AbortError')) return;
+        if (phaseRef.current === 'preparing') {
+          dispatch({ type: 'blocked', failure: gateFailure(error) });
+          return;
+        }
+        if (phaseRef.current === 'rejected') return;
+        dispatch({ type: 'complete' });
+        const response = errorResponse(error);
+        closeOnce({ ok: false, ...response });
+      }
+    };
+    void run();
+
     return () => {
       active = false;
       controller.abort();
+      if (controllerRef.current === controller) controllerRef.current = null;
       pendingRef.current?.({ allowed: false });
       pendingRef.current = null;
     };
-  }, [
-    caller,
-    events,
-    wire,
-    currentManagerId,
-    callingManagerId,
-    metadata,
-    initialError,
-    initialResult,
-    closeOnce,
-  ]);
+  }, [attempt, caller, events, wire, currentManagerId, metadata, initialError, initialResult, closeOnce]);
 
-  const progress = (
-    <ManagerShell badge={{ label: 'Connecting', tone: 'progress' }}>
-      <StatusPanel
-        tone="progress"
-        eyebrow="Logical database request"
-        title={busy ? 'Creating PostgreSQL connection' : 'Preparing PostgreSQL connection'}
-        role="status"
-      >
-        The manager is validating the installation and preparing isolated database credentials.
-      </StatusPanel>
-    </ManagerShell>
+  const reject = () => {
+    if (gate.kind === 'executing' || closedRef.current) return;
+    phaseRef.current = 'rejected';
+    const response =
+      gate.kind === 'blocked'
+        ? { status: gate.failure.status, message: gate.failure.message }
+        : { status: 499, message: 'Database access was cancelled' };
+    pendingRef.current?.({ allowed: false });
+    pendingRef.current = null;
+    dispatch({ type: 'close' });
+    controllerRef.current?.abort();
+    closeOnce({ ok: false, ...response });
+  };
+
+  const retry = () => {
+    if (gate.kind !== 'blocked' || !gate.failure.retryable) return;
+    phaseRef.current = 'preparing';
+    dispatch({ type: 'retry' });
+    setAttempt((value) => value + 1);
+  };
+
+  if (gate.kind === 'closed') return null;
+
+  const progressTitle = gate.kind === 'executing' ? 'Creating PostgreSQL connection' : 'Preparing PostgreSQL connection';
+  return (
+    <>
+      <ManagerShell badge={{ label: gate.kind === 'executing' ? 'Connecting' : 'Preparing', tone: 'progress' }}>
+        <StatusPanel
+          tone="progress"
+          eyebrow="Logical database request"
+          title={progressTitle}
+          role="status"
+        >
+          The manager is validating the installation and preparing isolated database credentials.
+        </StatusPanel>
+      </ManagerShell>
+      <ConnectionApprovalDialog
+        gate={gate}
+        request={metadata}
+        onApprove={(access) => {
+          if (gate.kind !== 'ready') return;
+          phaseRef.current = 'approved';
+          dispatch({ type: 'approve' });
+          pendingRef.current?.({ allowed: true, access });
+          pendingRef.current = null;
+        }}
+        onReject={reject}
+        onRetry={retry}
+      />
+    </>
   );
-
-  if (approval) {
-    return (
-      <>
-        {progress}
-        <ConnectionApprovalDialog
-          context={approval}
-          busy={busy}
-          onApprove={(access) => {
-            pendingRef.current?.({ allowed: true, access });
-            pendingRef.current = null;
-            setApproval(null);
-            setBusy(true);
-          }}
-          onReject={() => {
-            pendingRef.current?.({ allowed: false });
-            pendingRef.current = null;
-            setApproval(null);
-          }}
-        />
-      </>
-    );
-  }
-  return progress;
 }

@@ -32,6 +32,7 @@ function fixture(overrides: Partial<RPCCaller> = {}, metadata: unknown = {}) {
     getRuns: vi.fn().mockResolvedValue({ items: [], limit: 1, offset: 0, total: 0 }),
     getMyResources: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
     getResource: vi.fn(),
+    start: vi.fn(),
     databaseQuery: vi.fn(() => {
       throw new Error('database must not be used');
     }),
@@ -91,11 +92,46 @@ describe('run-backed App boot', () => {
     expect(current.caller.databaseQuery).not.toHaveBeenCalled();
   });
   it('renders connection mode without discovering a resource', async () => {
-    const current = fixture({}, { action: 'create-connection' });
+    const current = fixture(
+      { getCallingManager: vi.fn(() => new Promise(() => undefined)) },
+      { action: 'create-connection' },
+    );
     render(<App createClient={current.factory} />);
     await waitFor(() =>
-      expect(screen.getByRole('status')).toHaveTextContent('Preparing PostgreSQL connection'),
+      expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible(),
     );
+    expect(current.caller.getMyResources).not.toHaveBeenCalled();
+  });
+  it('shows create approval while caller lookup is pending', async () => {
+    const current = fixture(
+      { getCallingManager: vi.fn(() => new Promise(() => undefined)) },
+      { action: 'create-connection', scope: 'database', operation: 'create', database: 'orders' },
+    );
+    render(<App createClient={current.factory} />);
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' }),
+    ).toBeVisible();
+    expect(screen.getByRole('dialog')).toHaveTextContent('Identifying the calling manager');
+    expect(current.caller.getMyResources).not.toHaveBeenCalled();
+    expect(current.caller.start).not.toHaveBeenCalled();
+  });
+  it.each([
+    ['missing', vi.fn().mockResolvedValue(null)],
+    ['failed', vi.fn().mockRejectedValue(new Error('transport detail'))],
+  ])('shows a blocked create approval when caller lookup is %s', async (_case, getCallingManager) => {
+    const current = fixture(
+      { getCallingManager },
+      { action: 'create-connection', scope: 'database', operation: 'create', database: 'orders' },
+    );
+    render(<App createClient={current.factory} />);
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' }),
+    ).toBeVisible();
+    expect(await screen.findByRole('alert')).toHaveTextContent('A calling manager is required');
+    expect(screen.queryByRole('button', { name: 'Approve connection' })).not.toBeInTheDocument();
+    expect(current.caller.start).not.toHaveBeenCalled();
   });
   it('passes complete connection metadata into the approval flow', async () => {
     const current = fixture(
@@ -111,19 +147,17 @@ describe('run-backed App boot', () => {
     await waitFor(() =>
       expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible(),
     );
-    expect(screen.getByText('Dedicated superuser')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Dedicated superuser')).toBeVisible());
     expect(screen.getByText('team=payments')).toBeVisible();
   });
   it('closes malformed connection metadata with a normalized 400', async () => {
     const current = fixture({}, { action: 'create-connection', scope: 'database' });
     render(<App createClient={current.factory} />);
     await waitFor(() =>
-      expect(current.wire.close).toHaveBeenCalledWith({
-        manager: 'postgres-manager',
-        ok: false,
-        error: { status: 400, message: 'Invalid PostgreSQL connection request' },
-      }),
+      expect(screen.getByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible(),
     );
+    expect(screen.getByRole('alert')).toHaveTextContent('Invalid PostgreSQL connection request');
+    expect(current.caller.getCallingManager).not.toHaveBeenCalled();
     expect(current.caller.getMyResources).not.toHaveBeenCalled();
   });
   it('refreshes latest lifecycle after a terminal run update', async () => {
@@ -214,7 +248,7 @@ describe('run-backed App boot', () => {
       },
     );
     render(<App createClient={current.factory} />);
-    await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' });
+    await screen.findByRole('button', { name: 'Approve connection' });
     fireEvent.click(screen.getByRole('button', { name: 'Approve connection' }));
     await waitFor(() => expect(current.caller.start).toHaveBeenCalledTimes(1));
 
@@ -322,22 +356,15 @@ describe('run-backed App boot', () => {
       { action: 'delete-connection' },
     );
     render(<App createClient={current.factory} />);
-    expect(
-      await screen.findByRole('dialog', { name: 'Delete PostgreSQL connection?' }),
-    ).toBeVisible();
+    expect(await screen.findByRole('dialog', { name: 'Delete PostgreSQL connection?' })).toBeVisible();
     expect(current.caller.getCallingManager).toHaveBeenCalledOnce();
   });
 
-  it('closes malformed delete metadata with a normalized 400 before discovery', async () => {
+  it('blocks malformed delete metadata with a normalized 400 before discovery', async () => {
     const current = fixture({}, { action: 'delete-connection', connection: '' });
     render(<App createClient={current.factory} />);
-    await waitFor(() =>
-      expect(current.wire.close).toHaveBeenCalledWith({
-        manager: 'postgres-manager',
-        ok: false,
-        error: { status: 400, message: 'Invalid PostgreSQL connection deletion request' },
-      }),
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid PostgreSQL connection deletion request');
+    expect(current.wire.close).not.toHaveBeenCalled();
     expect(current.caller.getMyResources).not.toHaveBeenCalled();
   });
 });
