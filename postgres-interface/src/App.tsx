@@ -4,6 +4,7 @@ import { RPC, type Events } from '@ezenki/deploy-commander-installer-interface';
 import ManagerDashboard, { type LifecycleAction } from './components/ManagerDashboard';
 import ActionButton from './components/ActionButton';
 import ConnectionRequest from './components/ConnectionRequest';
+import DeleteConnectionRequest from './components/DeleteConnectionRequest';
 import ManagerShell from './components/ManagerShell';
 import StatusPanel from './components/StatusPanel';
 import { createInterfaceClient, type AppClient } from './lib/interfaceClient';
@@ -12,6 +13,7 @@ import {
   parseConnectionRequest,
   type ParsedConnectionRequest,
 } from './lib/postgresConnectionRequest';
+import { parseDeleteConnectionRequest, type ParsedDeleteConnectionRequest } from './lib/postgresDeleteRequest';
 import { listPostgresResources, readPostgresInstallation } from './lib/postgresResource';
 import { readPostgresLifecycle, type PostgresLifecycle } from './lib/postgresRuns';
 import { installPostgres, teardownPostgres } from './lib/lifecycleActions';
@@ -30,25 +32,31 @@ type DashboardView = {
   contradiction: boolean;
   error: string | null;
 };
-type ConnectionView = {
-  kind: 'connection';
+type CreateConnectionView = {
+  kind: 'create-connection';
   manager: string;
   callerId: string | null;
   metadata: ParsedConnectionRequest;
   error: string | null;
 };
+type DeleteConnectionView = {
+  kind: 'delete-connection';
+  manager: string;
+  callerId: string | null;
+  metadata: ParsedDeleteConnectionRequest;
+  error: string | null;
+};
+type ChildView = CreateConnectionView | DeleteConnectionView;
 type ErrorView = { kind: 'error'; message: string };
-type View = DashboardView | ConnectionView | ErrorView;
+type View = DashboardView | ChildView | ErrorView;
 
 const EMPTY_CONNECTION_REQUEST: ParsedConnectionRequest = { access: null, labels: {} };
+const EMPTY_DELETE_REQUEST: ParsedDeleteConnectionRequest = { connectionId: null };
 
-function isConnectionRequestMetadata(value: unknown): value is { action: 'create-connection' } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (value as { action?: unknown }).action === 'create-connection'
-  );
+function childAction(value: unknown): 'create-connection' | 'delete-connection' | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const action = (value as { action?: unknown }).action;
+  return action === 'create-connection' || action === 'delete-connection' ? action : null;
 }
 
 function managerId(value: unknown): string | null {
@@ -81,7 +89,7 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
   const controllerRef = useRef<AbortController | null>(null);
   // Connection requests are child workflows.  Their metadata and effect must
   // remain stable while the host refreshes dashboard state for run events.
-  const connectionViewRef = useRef<ConnectionView | null>(null);
+  const connectionViewRef = useRef<ChildView | null>(null);
 
   useEffect(() => {
     const generation = ++clientGeneration.current;
@@ -125,26 +133,26 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       const manager = managerId(await client.caller.getManager());
       if (!manager) throw new Error('Unable to identify the PostgreSQL manager');
       const metadata = await client.caller.getMetadata();
-      if (isConnectionRequestMetadata(metadata)) {
+      const action = childAction(metadata);
+      if (action) {
         const caller = managerId(await client.caller.getCallingManager().catch(() => null));
+        if (action === 'delete-connection') {
+          try {
+            const next: DeleteConnectionView = { kind: 'delete-connection', manager, callerId: caller, metadata: parseDeleteConnectionRequest(metadata), error: caller ? null : 'A calling manager is required' };
+            connectionViewRef.current = next;
+            return next;
+          } catch {
+            const next: DeleteConnectionView = { kind: 'delete-connection', manager, callerId: caller, metadata: EMPTY_DELETE_REQUEST, error: 'Invalid PostgreSQL connection deletion request' };
+            connectionViewRef.current = next;
+            return next;
+          }
+        }
         try {
-          const next: ConnectionView = {
-            kind: 'connection',
-            manager,
-            callerId: caller,
-            metadata: parseConnectionRequest(metadata),
-            error: caller ? null : 'A calling manager is required',
-          };
+          const next: CreateConnectionView = { kind: 'create-connection', manager, callerId: caller, metadata: parseConnectionRequest(metadata), error: caller ? null : 'A calling manager is required' };
           connectionViewRef.current = next;
           return next;
         } catch {
-          const next: ConnectionView = {
-            kind: 'connection',
-            manager,
-            callerId: caller,
-            metadata: EMPTY_CONNECTION_REQUEST,
-            error: 'Invalid PostgreSQL connection request',
-          };
+          const next: CreateConnectionView = { kind: 'create-connection', manager, callerId: caller, metadata: EMPTY_CONNECTION_REQUEST, error: 'Invalid PostgreSQL connection request' };
           connectionViewRef.current = next;
           return next;
         }
@@ -231,9 +239,21 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
       </ManagerShell>
     );
   if (!client) return null;
-  if (view.kind === 'connection')
+  if (view.kind === 'create-connection')
     return (
       <ConnectionRequest
+        caller={client.caller}
+        events={client.events}
+        wire={client.wire}
+        currentManagerId={view.manager}
+        callingManagerId={view.callerId}
+        metadata={view.metadata}
+        initialError={view.error}
+      />
+    );
+  if (view.kind === 'delete-connection')
+    return (
+      <DeleteConnectionRequest
         caller={client.caller}
         events={client.events}
         wire={client.wire}

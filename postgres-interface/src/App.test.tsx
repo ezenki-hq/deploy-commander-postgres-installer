@@ -263,4 +263,19 @@ describe('run-backed App boot', () => {
     view.unmount();
     await waitFor(() => expect(second.wire.end).toHaveBeenCalledOnce());
   });
+
+  it('routes exact delete metadata without entering the dashboard', async () => {
+    const connection = { connection: { id: 'connection-1', manager: 'caller-manager', resource: resource.id, external: false, created_at: 'now', updated_at: 'now', labels: { 'postgres.access': 'database', 'postgres.database': 'orders' } }, config: { id: 'connection-1', manager: 'caller-manager', resource: resource.id, metadata: { host: 'postgres', port: 5432, database: 'orders', username: 'dc_user_0123456789abcdef0123456789abcdef', password: 'logical-password', access: { scope: 'database', operation: 'create', database: 'orders' }, platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } } };
+    const current = fixture({ getMyResources: vi.fn().mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }), getResource: vi.fn().mockResolvedValue({ resource, config: { id: resource.id, manager: resource.manager, agent: 'agent', resource_type: 'postgres', name: 'postgres', metadata: { engine: 'postgres', version: '15', administrator: { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'admin-password' } }, platform_connection: { type: 'Platform', data: { network: 'postgres-network' } } } }), getConnections: vi.fn().mockResolvedValue({ items: [connection.connection], limit: 50, offset: 0, total: 1 }), getConnection: vi.fn().mockResolvedValue(connection) }, { action: 'delete-connection' });
+    render(<App createClient={current.factory} />);
+    expect(await screen.findByRole('dialog', { name: 'Delete PostgreSQL connection?' })).toBeVisible();
+    expect(current.caller.getCallingManager).toHaveBeenCalledOnce();
+  });
+
+  it('closes malformed delete metadata with a normalized 400 before discovery', async () => {
+    const current = fixture({}, { action: 'delete-connection', connection: '' });
+    render(<App createClient={current.factory} />);
+    await waitFor(() => expect(current.wire.close).toHaveBeenCalledWith({ manager: 'postgres-manager', ok: false, error: { status: 400, message: 'Invalid PostgreSQL connection deletion request' } }));
+    expect(current.caller.getMyResources).not.toHaveBeenCalled();
+  });
 });
