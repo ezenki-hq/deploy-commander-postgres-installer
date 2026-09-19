@@ -25,7 +25,7 @@ const platform: PlatformConnection = {
 };
 
 describe('postgres administration plans', () => {
-  it('assembles the runner connection contract and database catalog hook', () => {
+  it('assembles the runner connection contract without a database catalog hook', () => {
     const plan = buildConnectionRunPlan({
       administrator,
       login: {
@@ -55,14 +55,8 @@ describe('postgres administration plans', () => {
           },
         ],
       },
-      object_hooks: [
-        {
-          kind: 'connection',
-          name: 'postgres-connection',
-          create: { before: { bindings: expect.any(Object) } },
-        },
-      ],
     });
+    expect(plan).not.toHaveProperty('object_hooks');
     expect(plan.connections?.create?.[0].metadata).toMatchObject({
       database: 'orders',
       access: { scope: 'database', operation: 'create', database: 'orders' },
@@ -72,7 +66,7 @@ describe('postgres administration plans', () => {
     );
   });
 
-  it('does not catalog full access and cleans only created database records', () => {
+  it('does not catalog full access and uses service-only cleanup', () => {
     const plan = buildConnectionRunPlan({
       administrator,
       login: {
@@ -102,13 +96,7 @@ describe('postgres administration plans', () => {
       resourceId: 'resource-1',
       platform,
     });
-    expect(cleanup.object_hooks).toMatchObject([
-      {
-        kind: 'container',
-        name: 'postgres-admin',
-        remove: { after: { bindings: expect.any(Object) } },
-      },
-    ]);
+    expect(cleanup).not.toHaveProperty('object_hooks');
   });
 
   it('builds an isolated runner-only provisioning plan with environment-bound values', () => {

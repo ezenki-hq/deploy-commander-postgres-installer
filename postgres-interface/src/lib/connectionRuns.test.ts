@@ -264,14 +264,14 @@ describe('connection run records', () => {
     });
     expect(parseCleanupRun(result)).not.toHaveProperty('platform');
   });
-  it('requires catalog hooks for created database cleanup', () => {
+  it('accepts service-only cleanup for created database cleanup', () => {
     const result = runResult('cleanup-connection', {
       scope: 'database',
       operation: 'create',
       database: 'orders',
     });
     delete mutableMetadata(result).object_hooks;
-    expect(() => parseCleanupRun(result)).toThrow();
+    expect(() => parseCleanupRun(result)).not.toThrow();
   });
   it('rejects a database drop in role-only cleanup', () => {
     const result = runResult('cleanup-connection', {

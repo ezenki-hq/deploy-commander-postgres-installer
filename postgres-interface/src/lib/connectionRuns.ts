@@ -1,11 +1,5 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
-import {
-  CATALOG_DELETE_QUERY,
-  CATALOG_MARK_CLEANUP_QUERY,
-  CATALOG_UPSERT_QUERY,
-  catalogRecordId,
-} from './postgresCatalog';
 import { connectionLabels, type AccessRequest } from './postgresConnectionRequest';
 import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
 
@@ -46,8 +40,6 @@ export interface CleanupRunRecord {
   /** The note protocol used to create this run. */
   version: 'v1' | 'v2';
   platform?: PlatformConnection;
-  /** Managed catalog owner, when cleanup metadata carries one. */
-  catalogOperationId?: string;
 }
 export type ConnectionNote = ({ kind: 'provision' } | { kind: 'cleanup' }) &
   ConnectionOperationIdentity;
@@ -314,68 +306,6 @@ function connectionEntry(
     platform: validatePlatform(config.platform_connection),
   };
 }
-function validateProvisionHook(
-  metadata: UnknownRecord,
-  access: AccessRequest,
-  resourceId: string,
-): void {
-  if (access.scope === 'full') {
-    if (metadata.object_hooks !== undefined) throw recovery();
-    return;
-  }
-  if (!Array.isArray(metadata.object_hooks) || metadata.object_hooks.length !== 1) throw recovery();
-  const hook = metadata.object_hooks[0];
-  if (
-    !isRecord(hook) ||
-    hook.kind !== 'connection' ||
-    hook.name !== 'postgres-connection' ||
-    !isRecord(hook.create) ||
-    !isRecord(hook.create.before) ||
-    hook.create.before.query !== CATALOG_UPSERT_QUERY ||
-    !isRecord(hook.create.before.bindings)
-  )
-    throw recovery();
-  const bindings = hook.create.before.bindings;
-  if (
-    bindings.record_id !== catalogRecordId(resourceId, access.database) ||
-    bindings.resource_id !== resourceId ||
-    bindings.name !== access.database ||
-    bindings.origin !== (access.operation === 'create' ? 'managed' : 'pre-existing') ||
-    (bindings.operation_id !== undefined &&
-      (typeof bindings.operation_id !== 'string' || !OPERATION_ID.test(bindings.operation_id))) ||
-    (Object.keys(bindings).length !== 4 && Object.keys(bindings).length !== 5)
-  )
-    throw recovery();
-}
-function validateCleanupHook(
-  metadata: UnknownRecord,
-  access: AccessRequest,
-  resourceId: string,
-): void {
-  if (access.scope !== 'database' || access.operation !== 'create') {
-    if (metadata.object_hooks !== undefined) throw recovery();
-    return;
-  }
-  if (!Array.isArray(metadata.object_hooks) || metadata.object_hooks.length !== 1) throw recovery();
-  const hook = metadata.object_hooks[0];
-  if (
-    !isRecord(hook) ||
-    hook.kind !== 'container' ||
-    hook.name !== 'postgres-admin' ||
-    !isRecord(hook.remove) ||
-    !isRecord(hook.remove.after) ||
-    (hook.remove.after.query !== CATALOG_DELETE_QUERY &&
-      hook.remove.after.query !== CATALOG_MARK_CLEANUP_QUERY) ||
-    !isRecord(hook.remove.after.bindings) ||
-    hook.remove.after.bindings.record_id !== catalogRecordId(resourceId, access.database) ||
-    (hook.remove.after.query === CATALOG_MARK_CLEANUP_QUERY &&
-      (typeof hook.remove.after.bindings.operation_id !== 'string' ||
-        !OPERATION_ID.test(hook.remove.after.bindings.operation_id))) ||
-    Object.keys(hook.remove.after.bindings).length !==
-      (hook.remove.after.query === CATALOG_MARK_CLEANUP_QUERY ? 2 : 1)
-  )
-    throw recovery();
-}
 function identityOf(note: ConnectionNote): ConnectionOperationIdentity {
   return { operationId: note.operationId, callerId: note.callerId, resourceId: note.resourceId };
 }
@@ -458,7 +388,6 @@ export function parseProvisionRun(value: unknown): ProvisionRunRecord {
   const servicePlatform = validatePlatform(service.connections[0]);
   if (!samePlatform(servicePlatform, connection.platform)) throw recovery();
   validateAdminEnvironment(service.environment);
-  validateProvisionHook(metadata, connection.access, identity.resourceId);
   return provisionRecord({
     identity,
     runId: parsed.run.id,
@@ -503,7 +432,6 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     access = { scope: 'full', superuser: mode === 'full-superuser' };
   } else throw recovery();
   validateCleanupScript(service.command, access);
-  validateCleanupHook(metadata, access, identity.resourceId);
   if (target.password === undefined) throw recovery();
   return cleanupRecord({
     identity,
@@ -514,16 +442,6 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     login: { username: target.username, password: target.password },
     labels: connectionLabels(access, {}),
     platform,
-    ...(access.scope === 'database' &&
-    access.operation === 'create' &&
-    Array.isArray(metadata.object_hooks) &&
-    isRecord(metadata.object_hooks[0]) &&
-    isRecord(metadata.object_hooks[0].remove) &&
-    isRecord(metadata.object_hooks[0].remove.after) &&
-    isRecord(metadata.object_hooks[0].remove.after.bindings) &&
-    typeof metadata.object_hooks[0].remove.after.bindings.operation_id === 'string'
-      ? { catalogOperationId: metadata.object_hooks[0].remove.after.bindings.operation_id }
-      : {}),
   });
 }
 

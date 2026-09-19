@@ -1,7 +1,6 @@
 import type { RPCCaller, RPC, StartRunOptions } from '@ezenki/deploy-commander-installer-interface';
 import { buildCleanupPlan, buildConnectionRunPlan } from './postgresPlans';
 import {
-  generateAdminCredentials,
   generateLoginCredentials,
   type AdminCredentials,
   type LoginCredentials,
@@ -10,6 +9,8 @@ import {
   findExistingConnection,
   findLegacyPublishedConnection,
   findPublishedConnection,
+  databaseSuggestions,
+  listResourcePostgresConnections,
   type ConnectionLookupResult,
 } from './postgresConnectionContract';
 import {
@@ -17,7 +18,7 @@ import {
   readPostgresInstallation,
   type PostgresInstallation,
 } from './postgresResource';
-import { findCorrelatedRun, readExactRun, readLatestRun, type RunStatus } from './postgresRuns';
+import { findCorrelatedRun, readExactRun, type RunStatus } from './postgresRuns';
 import {
   makeCleanupNote,
   makeLegacyCleanupNote,
@@ -30,12 +31,10 @@ import {
 } from './connectionRuns';
 import { RunFailedError, waitForRun, type RunEventSource } from './runMonitor';
 import {
-  OperationBusyError,
+  PostgresNotInstalledError,
   PostgresRecoveryRequiredError,
   PostgresRequestError,
 } from './postgresErrors';
-import { buildInstallPlan } from './installPlan';
-import { confirmCatalogCleanup, listCatalogDatabases } from './postgresCatalog';
 import {
   connectionLabels,
   type AccessRequest,
@@ -230,45 +229,6 @@ async function start(
   return match.id;
 }
 
-async function install(deps: ConnectionWorkflowDeps): Promise<PostgresInstallation> {
-  aborted(deps.signal);
-  const administrator = (deps.generateAdminCredentials ?? generateAdminCredentials)();
-  const note = `postgres-install:${operationId()}`;
-  let runId: string | null = null;
-  try {
-    runId = startedId(
-      await deps.caller.start('create', IMAGE, buildInstallPlan(administrator), note),
-    );
-  } catch {
-    // Correlate below.
-  }
-  if (!runId) {
-    const match = await findCorrelatedRun(deps.caller, 'create', note);
-    if (match.kind !== 'found') {
-      throw match.kind === 'ambiguous' ? recovery() : new Error(START_ERROR);
-    }
-    runId = match.id;
-  }
-  let completed: RPC.GetRun;
-  try {
-    completed = await wait(deps, runId);
-  } catch (error) {
-    if (isAbort(error)) throw error;
-    throw new Error('PostgreSQL installation failed');
-  }
-  if (
-    !record(completed) ||
-    !record(completed.run) ||
-    completed.run.id !== runId ||
-    completed.run.status !== 2
-  ) {
-    throw new Error('PostgreSQL installation failed');
-  }
-  const refreshed = await resources(deps.caller);
-  if (!refreshed) throw recovery();
-  return refreshed;
-}
-
 async function wait(deps: ConnectionWorkflowDeps, runId: string): Promise<RPC.GetRun> {
   return deps.waitForRun(deps.caller, deps.events, runId, { signal: deps.signal });
 }
@@ -279,6 +239,7 @@ async function lookup(
   callerId: string,
   access: AccessRequest,
   callerLabels: Record<string, string>,
+  origin?: 'managed' | 'existing' | null,
 ): Promise<ConnectionLookupResult> {
   return findExistingConnection(
     deps.caller,
@@ -286,7 +247,7 @@ async function lookup(
       managerId: callerId,
       resourceId: installation.resource.id,
       access,
-      labels: connectionLabels(access, callerLabels),
+      labels: connectionLabels(access, callerLabels, origin),
     },
     installation.platform,
   );
@@ -331,7 +292,7 @@ async function cleanupRetry(
   identity: ConnectionOperationIdentity,
   access: AccessRequest,
   login: LoginCredentials,
-  options: { legacy?: boolean; catalogOperationId?: string } = {},
+  options: { legacy?: boolean } = {},
 ): Promise<void> {
   const fresh = { ...identity, operationId: operationId() };
   const runId = await start(
@@ -350,7 +311,6 @@ async function cleanupRetry(
           access,
           resourceId: installation.resource.id,
           platform: installation.platform,
-          catalogOperationId: options.catalogOperationId ?? identity.operationId,
         }),
     options.legacy ? makeLegacyCleanupNote(fresh) : makeCleanupNote(fresh),
   );
@@ -359,14 +319,6 @@ async function cleanupRetry(
   } catch (error) {
     if (isAbort(error)) throw error;
     throw new Error(CLEANUP_ERROR);
-  }
-  if (!options.legacy && access.scope === 'database' && access.operation === 'create') {
-    await confirmCatalogCleanup(
-      deps.caller,
-      installation.resource.id,
-      access.database,
-      options.catalogOperationId ?? identity.operationId,
-    );
   }
 }
 
@@ -407,7 +359,6 @@ async function reconcileProvision(
   if (runStatus === 3) {
     await cleanupRetry(deps, installation, provision.identity, provision.access, provision.login, {
       legacy: provision.version === 'v1',
-      catalogOperationId: provision.identity.operationId,
     });
   }
   return { kind: 'retry' };
@@ -503,19 +454,11 @@ export async function reconcileLatestConnectionRun(
         cleanup.access.scope === 'database' &&
         cleanup.access.operation === 'create'
       ) {
-        if (!cleanup.catalogOperationId) throw recovery();
-        await confirmCatalogCleanup(
-          deps.caller,
-          installation.resource.id,
-          cleanup.access.database,
-          cleanup.catalogOperationId,
-        );
       }
       return { kind: 'retry' };
     }
     await cleanupRetry(deps, installation, cleanup.identity, cleanup.access, cleanup.login, {
       legacy: cleanup.version === 'v1',
-      catalogOperationId: cleanup.catalogOperationId ?? cleanup.identity.operationId,
     });
     return { kind: 'retry' };
   }
@@ -544,18 +487,22 @@ export async function createPostgresConnection(
   }
   const requestedAccess = request.metadata.access;
   const callerLabels = request.metadata.labels;
-  let installation = await resources(deps.caller);
-  let latest: RPC.RunItem | null = null;
-  if (!installation) {
-    latest = await readLatestRun(deps.caller);
-    if (latest && (latest.action === 'create' || latest.action === 'teardown') && latest.status < 2)
-      throw new OperationBusyError();
-    if (latest && (latest.action !== 'teardown' || latest.status !== 2)) throw recovery();
-  }
+  const installation = await resources(deps.caller);
+  if (!installation) throw new PostgresNotInstalledError();
 
   let catalogDatabases: string[] = [];
-  if (installation)
-    catalogDatabases = await listCatalogDatabases(deps.caller, installation.resource.id);
+  if (installation) {
+    try {
+      const connections = await listResourcePostgresConnections(
+        deps.caller,
+        installation.resource.id,
+        installation.platform,
+      );
+      catalogDatabases = databaseSuggestions(connections);
+    } catch {
+      catalogDatabases = [];
+    }
+  }
   const decision = await deps.requestApproval({
     callingManagerId: request.callingManagerId,
     installsPostgres: installation === null,
@@ -574,32 +521,9 @@ export async function createPostgresConnection(
   }
   const access = decision.access;
 
-  if (installation) {
-    latest = await readLatestRun(deps.caller);
-    if (latest?.action === 'create' || latest?.action === 'teardown') {
-      if (latest.status < 2) throw new OperationBusyError();
-      // A terminal lifecycle failure or a completed teardown alongside a
-      // visible resource is contradictory.  Do not provision into it.
-      if (latest.status === 3 || latest.action === 'teardown') throw recovery();
-    }
-    const recovered = await reconcileLatestConnectionRun(
-      deps,
-      latest,
-      request.callingManagerId,
-      access,
-      callerLabels,
-    );
-    if (recovered?.kind === 'connection') return recovered.value;
-  }
+  const origin = access.scope === 'full' ? null : access.operation === 'create' ? 'managed' : 'existing';
 
-  if (!installation) installation = await install(deps);
-  installation =
-    (await resources(deps.caller)) ??
-    (() => {
-      throw recovery();
-    })();
-
-  const current = await lookup(deps, installation, request.callingManagerId, access, callerLabels);
+  const current = await lookup(deps, installation, request.callingManagerId, access, callerLabels, origin);
   if (current.kind === 'match') return current.connection;
   if (current.kind === 'conflict') {
     throw new PostgresRequestError(
@@ -626,6 +550,7 @@ export async function createPostgresConnection(
       resourceId: installation.resource.id,
       platform: installation.platform,
       callerLabels,
+      origin,
       operationId: identity.operationId,
     }),
     makeProvisionNote(identity),
@@ -650,7 +575,7 @@ export async function createPostgresConnection(
 
   let persisted: ConnectionLookupResult;
   try {
-    persisted = await lookup(deps, installation, request.callingManagerId, access, callerLabels);
+    persisted = await lookup(deps, installation, request.callingManagerId, access, callerLabels, origin);
   } catch (error) {
     if (isAbort(error)) throw error;
     // A successful runner may already have published the connection.  A
@@ -668,7 +593,7 @@ export async function createPostgresConnection(
           access,
           username: login.username,
           password: login.password,
-          labels: connectionLabels(access, callerLabels),
+          labels: connectionLabels(access, callerLabels, origin),
         },
         installation.platform,
       );

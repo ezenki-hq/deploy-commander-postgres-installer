@@ -1,10 +1,9 @@
 import type { AdminCredentials } from './credentials';
 import type { LoginCredentials } from './credentials';
 import type { LogicalCredentials } from './legacyCredentials';
-import type { AccessRequest } from './postgresConnectionRequest';
+import type { AccessRequest, DatabaseOrigin } from './postgresConnectionRequest';
 import { connectionLabels } from './postgresConnectionRequest';
 import { buildAccessService, buildCleanupService } from './postgresAccessPlans';
-import { buildCatalogDeleteHook, buildCatalogHook } from './postgresCatalog';
 import {
   parsePlatformConnection,
   type PlatformConnection,
@@ -177,7 +176,7 @@ export interface CleanupPlanInput {
   access: AccessRequest;
   resourceId: string;
   platform: PlatformConnection;
-  /** Provision operation that owns the managed catalog row, when applicable. */
+  /** @deprecated ignored; retained for v1 callers during migration. */
   catalogOperationId?: string;
 }
 
@@ -207,12 +206,7 @@ export function buildCleanupPlan(
       input.login,
       input.platform,
     );
-    const catalogHook = buildCatalogDeleteHook(
-      input.access,
-      input.resourceId,
-      input.catalogOperationId,
-    );
-    return catalogHook ? { ...service, object_hooks: [catalogHook] } : service;
+    return service;
   }
 
   const administrator = inputOrAdministrator as AdminCredentials;
@@ -293,6 +287,7 @@ export interface ConnectionRunPlanInput {
   administrator: AdminCredentials;
   login: LoginCredentials;
   access: AccessRequest;
+  origin?: DatabaseOrigin | null;
   callerId: string;
   resourceId: string;
   platform: PlatformConnection;
@@ -309,7 +304,6 @@ export function buildConnectionRunPlan(input: ConnectionRunPlanInput): RunnerMet
     input.platform,
   );
   const metadata = buildConnectionMetadata(input.login, input.access, input.platform);
-  const hook = buildCatalogHook(input.access, input.resourceId, input.operationId);
   return {
     ...service,
     connections: {
@@ -319,10 +313,9 @@ export function buildConnectionRunPlan(input: ConnectionRunPlanInput): RunnerMet
           manager: input.callerId,
           resource: { id: input.resourceId },
           metadata,
-          labels: connectionLabels(input.access, input.callerLabels),
+          labels: connectionLabels(input.access, input.callerLabels, input.origin),
         },
       ],
     },
-    ...(hook ? { object_hooks: [hook] } : {}),
   };
 }

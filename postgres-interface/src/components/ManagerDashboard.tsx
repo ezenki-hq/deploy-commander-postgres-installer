@@ -35,18 +35,12 @@ export default function ManagerDashboard({
 }: ManagerDashboardProps) {
   const [confirmingTeardown, setConfirmingTeardown] = useState(false);
   const [teardownSubmitted, setTeardownSubmitted] = useState(false);
-  const [confirmingInstall, setConfirmingInstall] = useState(false);
-  const [installSubmitted, setInstallSubmitted] = useState(false);
   const busy = activeAction !== null || (lifecycle.kind === 'installed' && lifecycle.operationBusy);
   const hasResource = resource !== null;
   const canTeardown = hasResource && !activeAction;
   const requestTeardown = () => {
     setTeardownSubmitted(false);
     setConfirmingTeardown(true);
-  };
-  const requestInstall = () => {
-    setInstallSubmitted(false);
-    setConfirmingInstall(true);
   };
   const warning =
     resourceAmbiguous || resourceContradiction || (hasResource && !resourceCompatible);
@@ -170,7 +164,7 @@ export default function ManagerDashboard({
         title="PostgreSQL installation failed"
         role="alert"
         actions={
-          <ActionButton tone="primary" disabled={busy} onClick={requestInstall}>
+            <ActionButton tone="primary" disabled={busy} onClick={onInstall}>
             Install PostgreSQL
           </ActionButton>
         }
@@ -234,7 +228,7 @@ export default function ManagerDashboard({
         eyebrow="PostgreSQL service"
         title="Install PostgreSQL"
         actions={
-          <ActionButton tone="primary" disabled={busy} onClick={requestInstall}>
+          <ActionButton tone="primary" disabled={busy} onClick={onInstall}>
             Install PostgreSQL
           </ActionButton>
         }
@@ -256,25 +250,6 @@ export default function ManagerDashboard({
             setTeardownSubmitted(true);
             onTeardown();
             setConfirmingTeardown(false);
-          }}
-        />
-      )}
-      {confirmingInstall && (
-        <ConfirmDialog
-          busy={installSubmitted}
-          title="Install PostgreSQL?"
-          description="A shared PostgreSQL service and persistent storage will be created for this manager."
-          confirmLabel="Confirm installation"
-          busyMessage="Starting installation…"
-          tone="primary"
-          onCancel={() => {
-            if (!installSubmitted) setConfirmingInstall(false);
-          }}
-          onConfirm={() => {
-            if (installSubmitted) return;
-            setInstallSubmitted(true);
-            onInstall();
-            setConfirmingInstall(false);
           }}
         />
       )}
