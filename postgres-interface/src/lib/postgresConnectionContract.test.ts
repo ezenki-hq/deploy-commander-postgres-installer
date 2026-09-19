@@ -321,7 +321,9 @@ describe('owned deletion connection snapshots', () => {
   });
 
   it('compares every destructive snapshot field but ignores timestamps', async () => {
-    const caller = { getConnection: vi.fn().mockResolvedValue(full(deletionMetadata())) } as unknown as RPCCaller;
+    const caller = {
+      getConnection: vi.fn().mockResolvedValue(full(deletionMetadata())),
+    } as unknown as RPCCaller;
     const target = await readOwnedPostgresConnection(
       caller,
       'connection-1',

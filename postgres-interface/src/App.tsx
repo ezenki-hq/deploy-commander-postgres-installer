@@ -13,7 +13,10 @@ import {
   parseConnectionRequest,
   type ParsedConnectionRequest,
 } from './lib/postgresConnectionRequest';
-import { parseDeleteConnectionRequest, type ParsedDeleteConnectionRequest } from './lib/postgresDeleteRequest';
+import {
+  parseDeleteConnectionRequest,
+  type ParsedDeleteConnectionRequest,
+} from './lib/postgresDeleteRequest';
 import { listPostgresResources, readPostgresInstallation } from './lib/postgresResource';
 import { readPostgresLifecycle, type PostgresLifecycle } from './lib/postgresRuns';
 import { installPostgres, teardownPostgres } from './lib/lifecycleActions';
@@ -138,21 +141,45 @@ export default function App({ createClient = defaultClientFactory }: AppProps) {
         const caller = managerId(await client.caller.getCallingManager().catch(() => null));
         if (action === 'delete-connection') {
           try {
-            const next: DeleteConnectionView = { kind: 'delete-connection', manager, callerId: caller, metadata: parseDeleteConnectionRequest(metadata), error: caller ? null : 'A calling manager is required' };
+            const next: DeleteConnectionView = {
+              kind: 'delete-connection',
+              manager,
+              callerId: caller,
+              metadata: parseDeleteConnectionRequest(metadata),
+              error: caller ? null : 'A calling manager is required',
+            };
             connectionViewRef.current = next;
             return next;
           } catch {
-            const next: DeleteConnectionView = { kind: 'delete-connection', manager, callerId: caller, metadata: EMPTY_DELETE_REQUEST, error: 'Invalid PostgreSQL connection deletion request' };
+            const next: DeleteConnectionView = {
+              kind: 'delete-connection',
+              manager,
+              callerId: caller,
+              metadata: EMPTY_DELETE_REQUEST,
+              error: 'Invalid PostgreSQL connection deletion request',
+            };
             connectionViewRef.current = next;
             return next;
           }
         }
         try {
-          const next: CreateConnectionView = { kind: 'create-connection', manager, callerId: caller, metadata: parseConnectionRequest(metadata), error: caller ? null : 'A calling manager is required' };
+          const next: CreateConnectionView = {
+            kind: 'create-connection',
+            manager,
+            callerId: caller,
+            metadata: parseConnectionRequest(metadata),
+            error: caller ? null : 'A calling manager is required',
+          };
           connectionViewRef.current = next;
           return next;
         } catch {
-          const next: CreateConnectionView = { kind: 'create-connection', manager, callerId: caller, metadata: EMPTY_CONNECTION_REQUEST, error: 'Invalid PostgreSQL connection request' };
+          const next: CreateConnectionView = {
+            kind: 'create-connection',
+            manager,
+            callerId: caller,
+            metadata: EMPTY_CONNECTION_REQUEST,
+            error: 'Invalid PostgreSQL connection request',
+          };
           connectionViewRef.current = next;
           return next;
         }

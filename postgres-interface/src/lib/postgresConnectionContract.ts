@@ -281,7 +281,10 @@ function normalizeConnection(
       throw invalidConnection();
     }
   }
-  if (options.requirePlatformMatch && (!storedPlatform || !samePlatform(storedPlatform, authoritativePlatform))) {
+  if (
+    options.requirePlatformMatch &&
+    (!storedPlatform || !samePlatform(storedPlatform, authoritativePlatform))
+  ) {
     throw invalidConnection();
   }
 
