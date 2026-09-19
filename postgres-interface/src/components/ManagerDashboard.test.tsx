@@ -44,10 +44,13 @@ describe('ManagerDashboard', () => {
     expect(screen.getByText('Required for every connection request')).toBeVisible();
     expect(screen.queryByRole('button', { name: /reset remembered/i })).not.toBeInTheDocument();
   });
-  it('offers installation after a failed run', () => {
+  it('requires confirmation before starting installation after a failed run', () => {
     const onInstall = vi.fn();
     renderDashboard({ lifecycle: { kind: 'installation-failed', runId: 'run-3' }, onInstall });
     fireEvent.click(screen.getByRole('button', { name: 'Install PostgreSQL' }));
+    expect(screen.getByRole('dialog', { name: 'Install PostgreSQL?' })).toBeVisible();
+    expect(onInstall).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm installation' }));
     expect(onInstall).toHaveBeenCalledOnce();
   });
   it('offers teardown retry after failure', () => {
