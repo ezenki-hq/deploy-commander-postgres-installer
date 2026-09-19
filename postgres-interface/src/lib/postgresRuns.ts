@@ -95,7 +95,11 @@ export function resolvePostgresLifecycle(
   if (active?.action === 'create') return { kind: 'installing', runId: active.runId };
   if (active?.action === 'teardown') return { kind: 'tearing-down', runId: active.runId };
   if (resourcesOrLatest.length === 0) return { kind: 'not-installed' };
-  return { kind: 'installed', operationBusy: active !== null, ...(active ? { runId: active.runId } : {}) };
+  return {
+    kind: 'installed',
+    operationBusy: active !== null,
+    ...(active ? { runId: active.runId } : {}),
+  };
 }
 
 export async function readActivePostgresRun(caller: RPCCaller): Promise<ActivePostgresRun | null> {
@@ -106,17 +110,25 @@ export async function readActivePostgresRun(caller: RPCCaller): Promise<ActivePo
   while (first || offset < total) {
     let result: unknown;
     try {
-      result = await caller.getRuns({ statuses: ['0', '1'], sort: '-created_at', limit: PAGE_LIMIT, offset });
+      result = await caller.getRuns({
+        statuses: ['0', '1'],
+        sort: '-created_at',
+        limit: PAGE_LIMIT,
+        offset,
+      });
     } catch {
       throw fail();
     }
     const items = page(result, offset, PAGE_LIMIT);
     const responseTotal = (result as { total: number }).total;
-    if (first) { total = responseTotal; first = false; }
-    else if (responseTotal !== total) throw fail();
+    if (first) {
+      total = responseTotal;
+      first = false;
+    } else if (responseTotal !== total) throw fail();
     for (const item of items) {
       if (item.status !== 0 && item.status !== 1) throw fail();
-      if (validAction(item.action)) active.push({ action: item.action as ActivePostgresRun['action'], runId: item.id });
+      if (validAction(item.action))
+        active.push({ action: item.action as ActivePostgresRun['action'], runId: item.id });
     }
     if (items.length === 0 && total === 0) break;
     offset += items.length;

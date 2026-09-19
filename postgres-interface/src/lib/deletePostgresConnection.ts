@@ -1,10 +1,6 @@
 import type { RPCCaller, RPC, StartRunOptions } from '@ezenki/deploy-commander-installer-interface';
 import { buildCleanupPlan } from './postgresPlans';
-import {
-  makeCleanupNote,
-  parseCleanupRun,
-  type CleanupRunRecord,
-} from './connectionRuns';
+import { makeCleanupNote, parseCleanupRun, type CleanupRunRecord } from './connectionRuns';
 import {
   listPostgresResources,
   readPostgresInstallation,
@@ -96,7 +92,8 @@ export function deletionCleanup(
   const peers = resourceConnections.filter(
     (candidate) =>
       candidate.id !== target.id &&
-      candidate.access.scope === 'database' && candidate.access.database === database,
+      candidate.access.scope === 'database' &&
+      candidate.access.database === database,
   );
   return peers.length === 0 ? 'role-and-database' : 'role-only';
 }
@@ -207,7 +204,9 @@ export async function deletePostgresConnection(
     installation.resource.id,
     installation.platform,
   );
-  const owned = resourceConnections.filter((target) => target.managerId === request.callingManagerId);
+  const owned = resourceConnections.filter(
+    (target) => target.managerId === request.callingManagerId,
+  );
   const candidates =
     request.metadata.connectionId === null
       ? owned
@@ -232,7 +231,10 @@ export async function deletePostgresConnection(
   const freshTarget = freshConnections.find((target) => target.id === approved.id);
   if (!freshTarget || !samePostgresConnectionTarget(approved, freshTarget))
     throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
-  if (deletionCleanup(approved, resourceConnections) !== deletionCleanup(freshTarget, freshConnections))
+  if (
+    deletionCleanup(approved, resourceConnections) !==
+    deletionCleanup(freshTarget, freshConnections)
+  )
     throw new PostgresRequestError(409, 'PostgreSQL connection deletion consequences changed');
   const beforeCleanup = await readOwnedPostgresConnection(
     deps.caller,
@@ -243,7 +245,12 @@ export async function deletePostgresConnection(
   );
   if (!beforeCleanup || !samePostgresConnectionTarget(approved, beforeCleanup))
     throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
-  await reconcileOrRunCleanup(deps, installation, approved, deletionCleanup(approved, resourceConnections));
+  await reconcileOrRunCleanup(
+    deps,
+    installation,
+    approved,
+    deletionCleanup(approved, resourceConnections),
+  );
   const beforeDelete = await readOwnedPostgresConnection(
     deps.caller,
     approved.id,

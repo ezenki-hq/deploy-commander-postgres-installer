@@ -479,16 +479,24 @@ export function databaseConnectionState(
   }
   return {
     database,
-    origin: origins.size === 1 ? [...origins][0] ?? null : matching.some((t) => t.origin === null) ? null : null,
+    origin:
+      origins.size === 1
+        ? ([...origins][0] ?? null)
+        : matching.some((t) => t.origin === null)
+          ? null
+          : null,
     connectionIds: matching.map((target) => target.id),
   };
 }
 
 export function databaseSuggestions(targets: PostgresConnectionTarget[]): string[] {
-  return [...new Set(
-    targets
-      .flatMap((target) => (target.access.scope === 'database' ? [target.access.database] : [])),
-  )].sort();
+  return [
+    ...new Set(
+      targets.flatMap((target) =>
+        target.access.scope === 'database' ? [target.access.database] : [],
+      ),
+    ),
+  ].sort();
 }
 
 function rpcStatus(value: unknown): number | null {

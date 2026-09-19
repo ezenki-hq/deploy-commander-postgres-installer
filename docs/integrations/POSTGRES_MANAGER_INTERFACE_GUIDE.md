@@ -320,23 +320,17 @@ the exact caller, resource, user, access mode, credentials, and platform before 
 accepted; successful cleanup is reused and record deletion is retried without starting a
 second cleanup. A changed target or ambiguous history requires recovery.
 
-## Database catalog
+## Resource and connection authority
 
-The PostgreSQL manager maintains a credential-free database catalog in its manager database.
-The runner's `databaseQuery` object hook upserts a catalog record before a database-scoped
-connection is persisted. Records identify a resource and database name and retain whether
-the database was created by this manager or was pre-existing. Connection labels provide a
-second, queryable link:
+The existing PostgreSQL resource determines installation state. Connections on that resource
+determine logical access; active runs are transient and completed runs are not state. The
+manager does not use a database catalog or `databaseQuery`.
 
-- `postgres.database` selects database-scoped connections by database name;
-- `postgres.access` distinguishes database and full access.
-
-The catalog is an inventory of names known to this manager, not a live PostgreSQL database
-listing. It may be incomplete, and a name shown in the approval dialog can still fail if
-the runner cannot access it. Existing-database requests are checked by the runner against
-PostgreSQL. Full-access requests have no single database and do not create catalog records.
-Future manager features can link a connection to a catalog record using the resource ID,
-database name, and labels.
+Database-scoped connections use `postgres.access=database`, `postgres.database=<name>`, and
+`postgres.database-origin=managed|existing`. Full-access connections use
+`postgres.access=full` and do not carry database labels. Only the final connection to a
+manager-created (`managed`) database may remove that database. Other deletions remove only the
+connection role.
 
 ## Failure contract
 

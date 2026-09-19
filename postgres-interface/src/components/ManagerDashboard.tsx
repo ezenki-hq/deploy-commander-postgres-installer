@@ -139,7 +139,7 @@ export default function ManagerDashboard({
         title="PostgreSQL installation failed"
         role="alert"
         actions={
-            <ActionButton tone="primary" disabled={busy} onClick={onInstall}>
+          <ActionButton tone="primary" disabled={busy} onClick={onInstall}>
             Install PostgreSQL
           </ActionButton>
         }

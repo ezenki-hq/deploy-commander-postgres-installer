@@ -35,7 +35,7 @@ Its platform connection is read from the resource and must have the exact shape 
 
 ## State and credentials
 
-The latest relevant lifecycle action and status are the installation truth. Administrator credentials live in owner-scoped PostgreSQL resource metadata and are never exposed in the UI, local storage, or errors. Credential-less existing resources cannot be safely adopted; teardown and reinstall are required.
+The discovered PostgreSQL resource is the installation truth. Administrator credentials live in owner-scoped PostgreSQL resource metadata and are never exposed in the UI, local storage, or errors. Active runs are transient; completed runs do not define state.
 
 The runner may receive administrator and per-connection credentials through the access-controlled manager-scoped run configuration needed to execute its environment. Runner output is quiet and credentials are not logged.
 
@@ -45,7 +45,7 @@ Each logical connection gets a generated database, role, username, and password.
 
 Installation and teardown are resource-based and use exact run IDs. Runner status values are queued `0`, running `1`, done `2`, and failed `3`; `getRun(id)` is the authoritative fallback when an event is missed. Provisioning waits for PostgreSQL readiness, uses identifier/value-safe SQL, and is idempotent. Connection recovery uses versioned run notes/configuration and Deploy Commander connection records.
 
-Connection requests can request approval, automatically install PostgreSQL when needed, then provision an isolated database. Duplicate connections are checked before permission prompting or provisioning. A failed or ambiguous provisioning operation is recovered with a compensating cleanup run. A Deploy Commander connection is created only after provisioning succeeds.
+Connection requests require an existing PostgreSQL resource and user approval before provisioning. Installation is a direct dashboard action without a second confirmation popup. Connections are the logical-access authority: database-scoped connections carry `postgres.access=database`, `postgres.database=<name>`, and `postgres.database-origin=managed|existing`; full-access connections carry only `postgres.access=full`. Only the final connection to a manager-created (`managed`) database may drop that database.
 
 Every deletion requires explicit confirmation and only connections owned by the trusted calling manager are offered. Cleanup completes before the Deploy Commander connection record is removed. A connection-created database is deleted together with its generated user; existing databases and full-access databases are preserved while only the generated user is removed. Successful deletion closes the child with `{ "connection": "<deleted-connection-id>" }`. Retries reconcile durable cleanup runs and never start a duplicate cleanup for the same target.
 

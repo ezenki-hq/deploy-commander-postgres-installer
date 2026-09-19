@@ -94,14 +94,17 @@ describe('parseConnectionRequest', () => {
     expect(() => parseConnectionRequest(metadata)).toThrow('Invalid PostgreSQL connection request');
   });
 
-  it.each(['postgres.access', 'postgres.database', 'postgres.database-origin'])('rejects reserved label %s', (key) => {
-    expect(() =>
-      parseConnectionRequest({
-        action: 'create-connection',
-        labels: { [key]: 'caller-value' },
-      }),
-    ).toThrow('Invalid PostgreSQL connection request');
-  });
+  it.each(['postgres.access', 'postgres.database', 'postgres.database-origin'])(
+    'rejects reserved label %s',
+    (key) => {
+      expect(() =>
+        parseConnectionRequest({
+          action: 'create-connection',
+          labels: { [key]: 'caller-value' },
+        }),
+      ).toThrow('Invalid PostgreSQL connection request');
+    },
+  );
 });
 
 describe('connection request helpers', () => {

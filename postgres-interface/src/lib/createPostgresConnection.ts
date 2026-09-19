@@ -19,7 +19,12 @@ import {
   readPostgresInstallation,
   type PostgresInstallation,
 } from './postgresResource';
-import { findCorrelatedRun, readActivePostgresRun, readExactRun, type RunStatus } from './postgresRuns';
+import {
+  findCorrelatedRun,
+  readActivePostgresRun,
+  readExactRun,
+  type RunStatus,
+} from './postgresRuns';
 import {
   makeCleanupNote,
   makeLegacyCleanupNote,
@@ -454,12 +459,6 @@ export async function reconcileLatestConnectionRun(
     const installation = await resources(deps.caller);
     if (!installation || installation.resource.id !== cleanup.identity.resourceId) throw recovery();
     if (runStatus === 2) {
-      if (
-        cleanup.version !== 'v1' &&
-        cleanup.access.scope === 'database' &&
-        cleanup.access.operation === 'create'
-      ) {
-      }
       return { kind: 'retry' };
     }
     await cleanupRetry(deps, installation, cleanup.identity, cleanup.access, cleanup.login, {
@@ -540,15 +539,22 @@ export async function createPostgresConnection(
       : access.operation === 'create'
         ? 'managed'
         : (databaseConnectionState(
-              await listResourcePostgresConnections(
-                deps.caller,
-                installation.resource.id,
-                installation.platform,
-              ),
-              access.database,
-            ).origin ?? 'existing');
+            await listResourcePostgresConnections(
+              deps.caller,
+              installation.resource.id,
+              installation.platform,
+            ),
+            access.database,
+          ).origin ?? 'existing');
 
-  const current = await lookup(deps, installation, request.callingManagerId, access, callerLabels, origin);
+  const current = await lookup(
+    deps,
+    installation,
+    request.callingManagerId,
+    access,
+    callerLabels,
+    origin,
+  );
   if (current.kind === 'match') return current.connection;
   if (current.kind === 'conflict') {
     throw new PostgresRequestError(
@@ -600,7 +606,14 @@ export async function createPostgresConnection(
 
   let persisted: ConnectionLookupResult;
   try {
-    persisted = await lookup(deps, installation, request.callingManagerId, access, callerLabels, origin);
+    persisted = await lookup(
+      deps,
+      installation,
+      request.callingManagerId,
+      access,
+      callerLabels,
+      origin,
+    );
   } catch (error) {
     if (isAbort(error)) throw error;
     // A successful runner may already have published the connection.  A
