@@ -3,6 +3,7 @@ import {
   connectionLabels,
   generateDatabaseName,
   parseConnectionRequest,
+  resolveDatabaseOrigin,
   sameLabels,
 } from './postgresConnectionRequest';
 
@@ -93,7 +94,7 @@ describe('parseConnectionRequest', () => {
     expect(() => parseConnectionRequest(metadata)).toThrow('Invalid PostgreSQL connection request');
   });
 
-  it.each(['postgres.access', 'postgres.database'])('rejects reserved label %s', (key) => {
+  it.each(['postgres.access', 'postgres.database', 'postgres.database-origin'])('rejects reserved label %s', (key) => {
     expect(() =>
       parseConnectionRequest({
         action: 'create-connection',
@@ -115,12 +116,65 @@ describe('connection request helpers', () => {
       connectionLabels(
         { scope: 'database', operation: 'create', database: 'orders' },
         { team: 'payments' },
+        'managed',
       ),
     ).toEqual({
       team: 'payments',
       'postgres.access': 'database',
       'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
     });
+
+    expect(connectionLabels({ scope: 'full', superuser: false }, {}, null)).toEqual({
+      'postgres.access': 'full',
+    });
+  });
+
+  it('resolves explicit and legacy database origins', () => {
+    expect(
+      resolveDatabaseOrigin(
+        { scope: 'database', operation: 'create', database: 'orders' },
+        { 'postgres.access': 'database', 'postgres.database': 'orders' },
+      ),
+    ).toEqual({ origin: 'managed', legacy: true });
+
+    expect(
+      resolveDatabaseOrigin(
+        { scope: 'database', operation: 'existing', database: 'orders' },
+        {
+          'postgres.access': 'database',
+          'postgres.database': 'orders',
+          'postgres.database-origin': 'existing',
+        },
+      ),
+    ).toEqual({ origin: 'existing', legacy: false });
+  });
+
+  it.each([
+    {
+      access: { scope: 'database', operation: 'existing', database: 'orders' } as const,
+      labels: {
+        'postgres.access': 'database',
+        'postgres.database': 'orders',
+        'postgres.database-origin': 'invalid',
+      },
+    },
+    {
+      access: { scope: 'database', operation: 'create', database: 'orders' } as const,
+      labels: { 'postgres.access': 'full', 'postgres.database': 'orders' },
+    },
+    {
+      access: { scope: 'full', superuser: false } as const,
+      labels: { 'postgres.access': 'full', 'postgres.database-origin': 'managed' },
+    },
+    {
+      access: { scope: 'database', operation: 'create', database: 'orders' } as const,
+      labels: { 'postgres.access': 'database', 'postgres.database': 'other' },
+    },
+  ])('rejects invalid origin labels %#', ({ access, labels }) => {
+    expect(() => resolveDatabaseOrigin(access, labels)).toThrow(
+      'Invalid PostgreSQL connection labels',
+    );
   });
 
   it('compares complete label maps independent of key order', () => {

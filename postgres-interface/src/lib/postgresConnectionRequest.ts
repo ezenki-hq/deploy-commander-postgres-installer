@@ -18,7 +18,20 @@ export interface ParsedConnectionRequest {
   labels: Record<string, string>;
 }
 
-export const RESERVED_CONNECTION_LABELS = new Set(['postgres.access', 'postgres.database']);
+export type DatabaseOrigin = 'managed' | 'existing';
+
+export const POSTGRES_DATABASE_ORIGIN_LABEL = 'postgres.database-origin';
+
+export interface ResolvedDatabaseOrigin {
+  origin: DatabaseOrigin | null;
+  legacy: boolean;
+}
+
+export const RESERVED_CONNECTION_LABELS = new Set([
+  'postgres.access',
+  'postgres.database',
+  POSTGRES_DATABASE_ORIGIN_LABEL,
+]);
 
 type RequestRecord = Record<string, unknown>;
 type RandomBytes = (length: number) => Uint8Array;
@@ -158,13 +171,50 @@ export const generateDatabaseName = (
 export const connectionLabels = (
   access: AccessRequest,
   callerLabels: Record<string, string>,
+  origin: DatabaseOrigin | null =
+    access.scope === 'database'
+      ? access.operation === 'create'
+        ? 'managed'
+        : 'existing'
+      : null,
 ): Record<string, string> => {
   const labels = parseLabels(callerLabels);
   labels['postgres.access'] = access.scope;
   if (access.scope === 'database') {
+    if (origin === null) throw new Error('Database origin is required');
     labels['postgres.database'] = access.database;
+    labels[POSTGRES_DATABASE_ORIGIN_LABEL] = origin;
+  } else if (origin !== null) {
+    throw new Error('Full access cannot have a database origin');
   }
   return labels;
+};
+
+export const resolveDatabaseOrigin = (
+  access: AccessRequest,
+  labels: Record<string, string>,
+): ResolvedDatabaseOrigin => {
+  const invalidLabels = (): never => {
+    throw new PostgresRequestError(409, 'Invalid PostgreSQL connection labels');
+  };
+  if (!isRecord(labels)) return invalidLabels();
+  const accessLabel = labels['postgres.access'];
+  const databaseLabel = labels['postgres.database'];
+  const originLabel = labels[POSTGRES_DATABASE_ORIGIN_LABEL];
+  if (accessLabel !== access.scope) return invalidLabels();
+  if (access.scope === 'full') {
+    if (databaseLabel !== undefined || originLabel !== undefined) return invalidLabels();
+    return { origin: null, legacy: false };
+  }
+  if (databaseLabel !== access.database) return invalidLabels();
+  if (originLabel === undefined) {
+    return {
+      origin: access.operation === 'create' ? 'managed' : 'existing',
+      legacy: true,
+    };
+  }
+  if (originLabel !== 'managed' && originLabel !== 'existing') return invalidLabels();
+  return { origin: originLabel, legacy: false };
 };
 
 export const sameLabels = (
