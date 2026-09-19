@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { MANAGER_BUILD_MARKER } from '../lib/buildInfo';
 
 export type ShellBadgeTone = 'neutral' | 'progress' | 'success' | 'warning' | 'danger';
 
@@ -17,7 +18,10 @@ const badgeClasses: Record<ShellBadgeTone, string> = {
 
 export default function ManagerShell({ children, badge }: ManagerShellProps) {
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 sm:py-10 lg:px-8">
+    <main
+      data-manager-build={MANAGER_BUILD_MARKER}
+      className="min-h-screen bg-slate-50 px-4 py-6 text-slate-950 sm:px-6 sm:py-10 lg:px-8"
+    >
       <div className="mx-auto w-full max-w-5xl">
         <header className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
           <div>

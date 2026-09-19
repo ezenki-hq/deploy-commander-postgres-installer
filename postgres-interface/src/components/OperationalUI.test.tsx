@@ -16,6 +16,10 @@ describe('operational console primitives', () => {
     );
 
     expect(screen.getByRole('heading', { name: 'PostgreSQL manager' })).toBeVisible();
+    expect(screen.getByRole('main')).toHaveAttribute(
+      'data-manager-build',
+      'postgres-action-approval-gate-v1',
+    );
     expect(screen.getByText('Ready')).toBeVisible();
     expect(screen.getByText('Manager content')).toBeVisible();
   });
