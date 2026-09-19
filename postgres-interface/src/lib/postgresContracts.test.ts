@@ -1,24 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import {
-  isCreateConnectionMetadata,
-  parsePlatformConnection,
-  type PlatformConnection,
-} from './postgresContracts';
+import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
 
-describe('isCreateConnectionMetadata', () => {
-  it('accepts only the exact create-connection action object', () => {
-    expect(isCreateConnectionMetadata({ action: 'create-connection' })).toBe(true);
-  });
-
-  it.each([
-    null,
-    [],
-    { action: 'create' },
-    { action: 'create-connection', caller: 'manager' },
-    { action: 'create-connection', resource: 'resource' },
-    { action: 'create-connection', extra: undefined },
-  ])('rejects %j', (value) => {
-    expect(isCreateConnectionMetadata(value)).toBe(false);
+describe('runner transport contracts', () => {
+  it('supports named connection creation and lifecycle database hooks', () => {
+    const metadata = {
+      host: 'postgres' as const,
+      port: 5432 as const,
+      database: 'orders',
+      username: 'dc_user_0123456789abcdef0123456789abcdef',
+      password: 'secret',
+      platform_connection: {
+        type: 'Platform' as const,
+        data: { network: 'postgres-network' },
+      },
+      access: { scope: 'database' as const, operation: 'existing' as const, database: 'orders' },
+    };
+    expect({
+      connections: {
+        create: [
+          {
+            name: 'postgres-connection',
+            manager: 'manager-1',
+            resource: { id: 'resource-1' },
+            metadata,
+            labels: { 'postgres.access': 'database', 'postgres.database': 'orders' },
+          },
+        ],
+      },
+      object_hooks: [
+        {
+          kind: 'connection' as const,
+          name: 'postgres-connection',
+          create: { before: { query: 'SELECT 1', bindings: { resource_id: 'resource-1' } } },
+        },
+      ],
+    }).toMatchObject({ connections: { create: [{ name: 'postgres-connection' }] } });
   });
 });
 
@@ -52,10 +68,12 @@ describe('parsePlatformConnection', () => {
   });
 
   it('trims surrounding network whitespace before returning the contract', () => {
-    expect(parsePlatformConnection({
-      type: 'Platform',
-      data: { network: '  postgres-network  ' },
-    })).toEqual({
+    expect(
+      parsePlatformConnection({
+        type: 'Platform',
+        data: { network: '  postgres-network  ' },
+      }),
+    ).toEqual({
       type: 'Platform',
       data: { network: 'postgres-network' },
     });

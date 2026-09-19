@@ -32,12 +32,12 @@ The `src` folder contains the React frontend for the Deploy Commander PostgreSQL
 
 The interface is responsible for:
 
-* Creating the installer RPC caller.
-* Communicating with the Deploy Commander host interface.
-* Determining whether PostgreSQL is currently installed.
-* Tracking active installer runs.
-* Showing installation, teardown, and eventually connection-management controls.
-* Translating user actions into supported Deploy Commander RPC calls.
+- Creating the installer RPC caller.
+- Communicating with the Deploy Commander host interface.
+- Determining whether PostgreSQL is currently installed.
+- Tracking active installer runs.
+- Showing installation, teardown, and eventually connection-management controls.
+- Translating user actions into supported Deploy Commander RPC calls.
 
 The browser interface does not directly manage Docker, PostgreSQL, resources, or connections. Those operations must go through the Deploy Commander installer interface and runner contracts.
 
@@ -45,11 +45,11 @@ The browser interface does not directly manage Docker, PostgreSQL, resources, or
 
 The frontend uses:
 
-* React 19
-* TypeScript
-* Vite
-* Tailwind CSS
-* `@ezenki/deploy-commander-installer-interface`
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- `@ezenki/deploy-commander-installer-interface`
 
 The application entry point is:
 
@@ -84,10 +84,10 @@ src/
 
 It:
 
-* Loads global styles.
-* Finds the `root` DOM element.
-* Creates the React root.
-* Renders `App` inside `StrictMode`.
+- Loads global styles.
+- Finds the `root` DOM element.
+- Creates the React root.
+- Renders `App` inside `StrictMode`.
 
 Keep this file small.
 
@@ -97,13 +97,13 @@ Do not place application state, RPC setup, installer logic, or feature-specific 
 
 `App.tsx` currently owns application-level concerns:
 
-* Creating the installer wire.
-* Creating the typed RPC caller.
-* Receiving host interface events.
-* Checking recent runs.
-* Tracking whether a run is active.
-* Determining whether the install or teardown UI should be displayed.
-* Displaying initial loading and active-run states.
+- Creating the installer wire.
+- Creating the typed RPC caller.
+- Receiving host interface events.
+- Checking recent runs.
+- Tracking whether a run is active.
+- Determining whether the install or teardown UI should be displayed.
+- Displaying initial loading and active-run states.
 
 App-level state and coordination belong here or in app-level hooks extracted from here.
 
@@ -132,7 +132,7 @@ to connect the frontend to the host interface.
 Use:
 
 ```ts
-RPC.SetupRPCCaller(wire)
+RPC.SetupRPCCaller(wire);
 ```
 
 to create the typed RPC caller.
@@ -141,11 +141,11 @@ All Deploy Commander communication must go through the shared installer interfac
 
 Do not:
 
-* Call Deploy Commander HTTP endpoints directly from the browser.
-* Reimplement the wire protocol.
-* Create custom `postMessage` handling outside the installer interface package.
-* Create multiple independent RPC callers without a concrete need.
-* Copy RPC request or response types into this project when they are exported by the shared package.
+- Call Deploy Commander HTTP endpoints directly from the browser.
+- Reimplement the wire protocol.
+- Create custom `postMessage` handling outside the installer interface package.
+- Create multiple independent RPC callers without a concrete need.
+- Copy RPC request or response types into this project when they are exported by the shared package.
 
 The current setup includes a placeholder `sendAction` implementation for local development:
 
@@ -153,9 +153,9 @@ The current setup includes a placeholder `sendAction` implementation for local d
 async (_wire: WireSend) => {
   return {
     ok: true,
-    result: null
-  }
-}
+    result: null,
+  };
+};
 ```
 
 This behavior should not be mistaken for the production transport contract.
@@ -182,10 +182,10 @@ Do not put the caller itself into React state unless there is a strong reason.
 
 The application currently distinguishes these states:
 
-* Initial loading.
-* An installer run is active.
-* PostgreSQL is not installed.
-* PostgreSQL is installed.
+- Initial loading.
+- An installer run is active.
+- PostgreSQL is not installed.
+- PostgreSQL is installed.
 
 The current screen flow is:
 
@@ -204,13 +204,7 @@ A PostgreSQL installation may be active while having zero, one, or many Deploy C
 The current application retrieves the most recent run with:
 
 ```ts
-caller.current.getRuns(
-  undefined,
-  undefined,
-  undefined,
-  undefined,
-  1
-)
+caller.current.getRuns(undefined, undefined, undefined, undefined, 1);
 ```
 
 The helper:
@@ -221,18 +215,18 @@ checkRuns(...)
 
 currently treats the installer as ready for installation when:
 
-* There are no runs.
-* The latest run action is `teardown`.
+- There are no runs.
+- The latest run action is `teardown`.
 
 Otherwise it treats PostgreSQL as installed.
 
 When changing this logic, account for:
 
-* Failed installation runs.
-* Failed teardown runs.
-* Queued or running actions.
-* Actions unrelated to installation or teardown.
-* Additional future actions such as connection creation and deletion.
+- Failed installation runs.
+- Failed teardown runs.
+- Queued or running actions.
+- Actions unrelated to installation or teardown.
+- Additional future actions such as connection creation and deletion.
 
 Do not assume every latest run determines installation state once connection actions are added.
 
@@ -246,8 +240,8 @@ The wire event callback receives `Events.InterfaceEvent`.
 
 The current code handles:
 
-* `run-update` events.
-* Other run events containing a run identifier.
+- `run-update` events.
+- Other run events containing a run identifier.
 
 For `run-update` events, terminal status values currently recognized are:
 
@@ -260,10 +254,10 @@ After a terminal update, the app refreshes its run-derived state and clears the 
 
 Before changing status handling:
 
-* Inspect the shared installer interface types.
-* Confirm the meaning of numeric status values.
-* Prefer exported enums or named constants when available.
-* Do not introduce undocumented status numbers.
+- Inspect the shared installer interface types.
+- Confirm the meaning of numeric status values.
+- Prefer exported enums or named constants when available.
+- Do not introduce undocumented status numbers.
 
 The current code ignores an event when its run ID matches `currentRun.current`. Preserve the intended duplicate-event protection, but verify its behavior before expanding event handling.
 
@@ -275,11 +269,11 @@ Callbacks used by effects or wire handlers should be stable where required.
 
 When modifying `checkRun`, event handling, or wire initialization:
 
-* Check closure behavior carefully.
-* Avoid stale state.
-* Avoid creating a new wire on every render.
-* Include required dependencies in hook dependency arrays.
-* Do not suppress hook lint warnings without understanding the cause.
+- Check closure behavior carefully.
+- Avoid stale state.
+- Avoid creating a new wire on every render.
+- Include required dependencies in hook dependency arrays.
+- Do not suppress hook lint warnings without understanding the cause.
 
 Because `StrictMode` is enabled, development effects may run more than once. Code must tolerate this.
 
@@ -290,9 +284,9 @@ Keep state minimal and explicit.
 Current state includes:
 
 ```ts
-first
-loading
-running
+first;
+loading;
+running;
 ```
 
 These names are functional but not especially descriptive.
@@ -300,9 +294,9 @@ These names are functional but not especially descriptive.
 When doing substantial work in `App.tsx`, prefer names that describe meaning, such as:
 
 ```ts
-isInstalled
-isLoading
-isRunActive
+isInstalled;
+isLoading;
+isRunActive;
 ```
 
 Do not rename variables as unrelated cleanup during a narrowly scoped feature unless the change improves the implementation being performed.
@@ -317,12 +311,12 @@ The current top-level code does not expose failures from `checkRun` to the user.
 
 When improving error handling:
 
-* Catch RPC failures.
-* Show a useful user-facing error state.
-* Allow safe retry where appropriate.
-* Avoid leaving the application permanently in `Loading`.
-* Do not expose credentials or sensitive metadata.
-* Do not rely only on `console.log` for user-visible failures.
+- Catch RPC failures.
+- Show a useful user-facing error state.
+- Allow safe retry where appropriate.
+- Avoid leaving the application permanently in `Loading`.
+- Do not expose credentials or sensitive metadata.
+- Do not rely only on `console.log` for user-visible failures.
 
 Errors should be represented separately from loading and running states.
 
@@ -336,12 +330,12 @@ Connection management must remain distinct from PostgreSQL installation lifecycl
 
 The application will need to distinguish between:
 
-* Installing the PostgreSQL service.
-* Tearing down the PostgreSQL service.
-* Listing existing connections.
-* Creating a PostgreSQL connection.
-* Destroying a PostgreSQL connection.
-* Tracking runs associated with connection actions.
+- Installing the PostgreSQL service.
+- Tearing down the PostgreSQL service.
+- Listing existing connections.
+- Creating a PostgreSQL connection.
+- Destroying a PostgreSQL connection.
+- Tracking runs associated with connection actions.
 
 Do not use the latest run action alone to determine whether PostgreSQL is installed after connection actions are added.
 
@@ -405,11 +399,11 @@ Only create these folders when there is enough code to justify them.
 
 Examples of appropriate extracted logic include:
 
-* Stable installer wire setup.
-* Run-state synchronization.
-* Connection metadata construction.
-* Error normalization.
-* Shared input validation.
+- Stable installer wire setup.
+- Run-state synchronization.
+- Connection metadata construction.
+- Error normalization.
+- Shared input validation.
 
 Do not create generic utility abstractions for logic used only once unless they meaningfully improve clarity or testability.
 
@@ -431,11 +425,11 @@ Use `unknown` for untrusted values and narrow them before use.
 
 Do not duplicate types such as:
 
-* RPC responses.
-* Run records.
-* Connection records.
-* Resource records.
-* Interface events.
+- RPC responses.
+- Run records.
+- Connection records.
+- Resource records.
+- Interface events.
 
 When a shared package type is inadequate, determine whether the shared package should be updated rather than hiding the mismatch with unsafe casting.
 
@@ -454,10 +448,10 @@ Prefer Tailwind utilities for component-level styling.
 
 Use global CSS for:
 
-* Root layout.
-* Shared typography.
-* Broad application defaults.
-* Styles that cannot reasonably be expressed as local utilities.
+- Root layout.
+- Shared typography.
+- Broad application defaults.
+- Styles that cannot reasonably be expressed as local utilities.
 
 The existing CSS contains Vite starter styles. These may be removed or simplified when redesigning the interface, but avoid unrelated styling rewrites during backend integration work.
 
@@ -469,14 +463,14 @@ Use semantic HTML.
 
 Requirements include:
 
-* Buttons use `<button>`.
-* Form fields have associated labels.
-* Loading states are communicated clearly.
-* Errors are visible and understandable.
-* Destructive actions are labeled clearly.
-* Disabled actions use actual disabled controls where appropriate.
-* Focus indication must remain visible.
-* Status changes should be exposed accessibly when practical.
+- Buttons use `<button>`.
+- Form fields have associated labels.
+- Loading states are communicated clearly.
+- Errors are visible and understandable.
+- Destructive actions are labeled clearly.
+- Disabled actions use actual disabled controls where appropriate.
+- Focus indication must remain visible.
+- Status changes should be exposed accessibly when practical.
 
 Do not rely only on color to indicate state.
 
@@ -486,13 +480,13 @@ Treat all PostgreSQL credentials and connection metadata as sensitive.
 
 Never:
 
-* Log passwords.
-* Put passwords in URLs.
-* Place credentials in browser storage without an explicit design decision.
-* Display full credentials in general status screens.
-* Include secrets in thrown errors or visible debug messages.
-* Hard-code production credentials.
-* Trust client-provided ownership identifiers without server-side verification.
+- Log passwords.
+- Put passwords in URLs.
+- Place credentials in browser storage without an explicit design decision.
+- Display full credentials in general status screens.
+- Include secrets in thrown errors or visible debug messages.
+- Hard-code production credentials.
+- Trust client-provided ownership identifiers without server-side verification.
 
 The frontend may collect or generate credentials, but authorization and ownership enforcement must occur in Deploy Commander.
 
@@ -500,18 +494,18 @@ The frontend may collect or generate credentials, but authorization and ownershi
 
 When tests are introduced, prioritize:
 
-* `checkRuns` behavior.
-* Installation state detection.
-* Active run event handling.
-* Terminal run handling.
-* RPC failure states.
-* Duplicate event behavior.
-* Installation and teardown screen selection.
-* Connection list rendering.
-* Connection creation flow.
-* Connection deletion flow.
-* Connection action runs not corrupting installation state.
-* Sensitive values not appearing in rendered errors.
+- `checkRuns` behavior.
+- Installation state detection.
+- Active run event handling.
+- Terminal run handling.
+- RPC failure states.
+- Duplicate event behavior.
+- Installation and teardown screen selection.
+- Connection list rendering.
+- Connection creation flow.
+- Connection deletion flow.
+- Connection action runs not corrupting installation state.
+- Sensitive values not appearing in rendered errors.
 
 Mock the installer interface and RPC caller.
 

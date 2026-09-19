@@ -11,8 +11,10 @@ describe('ConfirmDialog', () => {
     const onConfirm = vi.fn();
     render(<ConfirmDialog busy={false} onCancel={vi.fn()} onConfirm={onConfirm} />);
 
-    expect(screen.getByRole('dialog', { name: 'Teardown PostgreSQL?' }))
-      .toHaveAttribute('aria-modal', 'true');
+    expect(screen.getByRole('dialog', { name: 'Teardown PostgreSQL?' })).toHaveAttribute(
+      'aria-modal',
+      'true',
+    );
     expect(screen.getByText(/shared PostgreSQL service and its logical databases/i)).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Confirm teardown' }));
     expect(onConfirm).toHaveBeenCalledOnce();
@@ -25,9 +27,7 @@ describe('ConfirmDialog', () => {
     document.body.append(opener);
     opener.focus();
     const onCancel = vi.fn();
-    const view = render(
-      <ConfirmDialog busy={false} onCancel={onCancel} onConfirm={vi.fn()} />,
-    );
+    const view = render(<ConfirmDialog busy={false} onCancel={onCancel} onConfirm={vi.fn()} />);
 
     expect(screen.getByRole('dialog')).toHaveFocus();
     await user.tab();

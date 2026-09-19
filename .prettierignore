@@ -1,0 +1,5 @@
+**/node_modules
+**/dist
+**/coverage
+docs/integrations/DEPLOY_COMMANDER_RUNNER_INTERFACE_GUIDE.md
+docs/integrations/MANAGER_INTERFACE_GUIDE.md

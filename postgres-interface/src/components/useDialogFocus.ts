@@ -17,15 +17,17 @@ export default function useDialogFocus<T extends HTMLElement>(
   const canDismissRef = useRef(canDismiss);
   const dismissRef = useRef(onDismiss);
 
-  useEffect(() => { canDismissRef.current = canDismiss; }, [canDismiss]);
-  useEffect(() => { dismissRef.current = onDismiss; }, [onDismiss]);
+  useEffect(() => {
+    canDismissRef.current = canDismiss;
+  }, [canDismiss]);
+  useEffect(() => {
+    dismissRef.current = onDismiss;
+  }, [onDismiss]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return undefined;
-    const previous = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialog.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -37,9 +39,7 @@ export default function useDialogFocus<T extends HTMLElement>(
         return;
       }
       if (event.key !== 'Tab') return;
-      const elements = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      );
+      const elements = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
       if (elements.length === 0) {
         event.preventDefault();
         dialog.focus();

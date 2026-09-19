@@ -24,17 +24,17 @@ Components in this folder are responsible for presenting installer controls and 
 
 The current components are:
 
-* `Install.tsx`
-* `Teardown.tsx`
+- `Install.tsx`
+- `Teardown.tsx`
 
 These components should remain focused on installer actions and related UI behavior. Application-wide run tracking, RPC initialization, and top-level screen selection belong in `src/App.tsx`.
 
 ## Technology
 
-* React
-* TypeScript
-* `@ezenki/deploy-commander-installer-interface`
-* Deploy Commander runner actions
+- React
+- TypeScript
+- `@ezenki/deploy-commander-installer-interface`
+- Deploy Commander runner actions
 
 ## Component Responsibilities
 
@@ -44,13 +44,13 @@ These components should remain focused on installer actions and related UI behav
 
 The current installation action:
 
-* Uses the action name `create`.
-* Uses the runner image `ezenki/deploy-commander-runner:latest`.
-* Declares a PostgreSQL service.
-* Uses the `postgres:15` image.
-* Configures PostgreSQL environment variables.
-* Declares a Deploy Commander PostgreSQL resource.
-* Creates the `postgres-data` volume.
+- Uses the action name `create`.
+- Uses the runner image `ezenki/deploy-commander-runner:latest`.
+- Declares a PostgreSQL service.
+- Uses the `postgres:15` image.
+- Configures PostgreSQL environment variables.
+- Declares a Deploy Commander PostgreSQL resource.
+- Creates the `postgres-data` volume.
 
 The component receives an `RPCCaller` through props and must use that caller rather than creating its own wire or RPC client.
 
@@ -60,9 +60,9 @@ The component receives an `RPCCaller` through props and must use that caller rat
 
 The current teardown action:
 
-* Uses the action name `teardown`.
-* Uses the runner image `ezenki/deploy-commander-runner:latest`.
-* Sends teardown metadata through the provided `RPCCaller`.
+- Uses the action name `teardown`.
+- Uses the runner image `ezenki/deploy-commander-runner:latest`.
+- Sends teardown metadata through the provided `RPCCaller`.
 
 The component must not independently determine whether teardown is allowed. Top-level installation state belongs in `App.tsx`.
 
@@ -73,14 +73,14 @@ Use the provided `RPCCaller` for all communication with Deploy Commander.
 Installer actions are started with:
 
 ```ts
-wire.start(action, runner, metadata)
+wire.start(action, runner, metadata);
 ```
 
 The arguments are:
 
-* `action`: the runner action to execute.
-* `runner`: the runner image.
-* `metadata`: the action-specific deployment plan.
+- `action`: the runner action to execute.
+- `runner`: the runner image.
+- `metadata`: the action-specific deployment plan.
 
 Do not bypass the installer interface package with direct HTTP calls.
 
@@ -123,10 +123,10 @@ The current installation plan uses:
 
 Preserve the distinction between:
 
-* Docker service configuration.
-* Deploy Commander resource declarations.
-* Resource metadata.
-* Persistent volumes.
+- Docker service configuration.
+- Deploy Commander resource declarations.
+- Resource metadata.
+- Persistent volumes.
 
 Do not move resource declarations outside the service plan unless the runner contract is intentionally changed.
 
@@ -143,11 +143,11 @@ This resource represents the installed PostgreSQL service within Deploy Commande
 
 Changes to the resource name or resource type may affect:
 
-* Resource discovery.
-* Connection ownership.
-* Connection creation.
-* Connection deletion.
-* Other managers that consume the PostgreSQL resource.
+- Resource discovery.
+- Connection ownership.
+- Connection creation.
+- Connection deletion.
+- Other managers that consume the PostgreSQL resource.
 
 Do not rename these values casually.
 
@@ -157,12 +157,12 @@ The current implementation contains hard-coded development credentials. These ar
 
 When credential generation is implemented:
 
-* Generate credentials at install time.
-* Use a sufficiently strong random password.
-* Do not log passwords.
-* Do not render passwords unnecessarily in the UI.
-* Store only the metadata required by the Deploy Commander resource and runner flow.
-* Keep the PostgreSQL container environment and resource metadata consistent.
+- Generate credentials at install time.
+- Use a sufficiently strong random password.
+- Do not log passwords.
+- Do not render passwords unnecessarily in the UI.
+- Store only the metadata required by the Deploy Commander resource and runner flow.
+- Keep the PostgreSQL container environment and resource metadata consistent.
 
 Do not commit fixed production credentials.
 
@@ -174,12 +174,12 @@ Connection features should use the Deploy Commander installer RPC interface rath
 
 A PostgreSQL connection will likely require data such as:
 
-* Host or service name.
-* Port.
-* Database name.
-* Username.
-* Password.
-* SSL mode or related connection options when applicable.
+- Host or service name.
+- Port.
+- Database name.
+- Username.
+- Password.
+- SSL mode or related connection options when applicable.
 
 The exact connection object and ownership rules must follow the installer interface and Deploy Commander APIs in use at implementation time.
 
@@ -189,10 +189,10 @@ Connection creation and deletion UI may be split into additional components when
 
 Suggested responsibilities are:
 
-* A component for listing existing PostgreSQL connections.
-* A component or form for creating a connection.
-* A control for deleting a selected connection.
-* Shared local types or helpers only when they are specific to this folder.
+- A component for listing existing PostgreSQL connections.
+- A component or form for creating a connection.
+- A control for deleting a selected connection.
+- Shared local types or helpers only when they are specific to this folder.
 
 Do not add connection-management behavior to `Install.tsx` unless it is part of the installation transaction itself.
 
@@ -202,11 +202,11 @@ Components may initiate runs, but top-level run status is managed by `App.tsx`.
 
 After calling `wire.start`:
 
-* Handle rejected promises.
-* Avoid unhandled promise rejections.
-* Do not independently poll for the same run state already tracked by `App.tsx`.
-* Do not create conflicting `running` state that duplicates the top-level state.
-* Disable repeated actions when necessary to avoid duplicate runs.
+- Handle rejected promises.
+- Avoid unhandled promise rejections.
+- Do not independently poll for the same run state already tracked by `App.tsx`.
+- Do not create conflicting `running` state that duplicates the top-level state.
+- Disable repeated actions when necessary to avoid duplicate runs.
 
 The existing `console.log` calls are temporary development behavior. Prefer visible error state for user-facing failures once the UI is expanded.
 
@@ -216,10 +216,10 @@ Do not silently ignore failures.
 
 For action failures:
 
-* Capture the error.
-* Present a useful error message to the user.
-* Preserve enough context to identify which action failed.
-* Avoid exposing credentials or sensitive connection data.
+- Capture the error.
+- Present a useful error message to the user.
+- Preserve enough context to identify which action failed.
+- Avoid exposing credentials or sensitive connection data.
 
 Do not throw errors from click handlers solely to surface them to React.
 
@@ -263,11 +263,11 @@ Avoid adding large component-specific style sections to `App.css`.
 
 Keep controls accessible:
 
-* Buttons must have clear labels.
-* Form fields must have labels.
-* Disabled and loading states must be visible.
-* Error messages must be readable.
-* Destructive actions must be clearly identified.
+- Buttons must have clear labels.
+- Form fields must have labels.
+- Disabled and loading states must be visible.
+- Error messages must be readable.
+- Destructive actions must be clearly identified.
 
 ## Security
 
@@ -275,18 +275,18 @@ Treat PostgreSQL credentials and connection details as sensitive.
 
 Never:
 
-* Log passwords.
-* Place credentials in URLs.
-* Store credentials in browser persistence without an explicit design decision.
-* Expose secrets in error messages.
-* Reuse the current hard-coded development password in production code.
+- Log passwords.
+- Place credentials in URLs.
+- Store credentials in browser persistence without an explicit design decision.
+- Expose secrets in error messages.
+- Reuse the current hard-coded development password in production code.
 
 When deleting a connection, confirm that the operation targets the intended Deploy Commander connection and does not destroy the PostgreSQL service itself.
 
 Teardown and connection deletion are separate operations:
 
-* Teardown removes the PostgreSQL installation.
-* Connection deletion removes access data or connection records.
+- Teardown removes the PostgreSQL installation.
+- Connection deletion removes access data or connection records.
 
 Do not conflate them.
 
@@ -296,12 +296,12 @@ Before starting an install or connection action, validate required input.
 
 For PostgreSQL connection creation, validate at least:
 
-* Username is present.
-* Password is present.
-* Database name is present when required.
-* Port is valid.
-* Referenced resource or manager identifiers are present.
-* Duplicate connections are handled according to the intended ownership rules.
+- Username is present.
+- Password is present.
+- Database name is present when required.
+- Port is valid.
+- Referenced resource or manager identifiers are present.
+- Duplicate connections are handled according to the intended ownership rules.
 
 Prefer shared validation helpers when multiple components need the same rules.
 
@@ -309,14 +309,14 @@ Prefer shared validation helpers when multiple components need the same rules.
 
 When tests are added, cover:
 
-* Install action metadata.
-* Teardown action invocation.
-* Loading and disabled button behavior.
-* Runner call failures.
-* Connection creation metadata.
-* Connection deletion calls.
-* Duplicate connection prevention.
-* Sensitive values not appearing in rendered errors.
+- Install action metadata.
+- Teardown action invocation.
+- Loading and disabled button behavior.
+- Runner call failures.
+- Connection creation metadata.
+- Connection deletion calls.
+- Duplicate connection prevention.
+- Sensitive values not appearing in rendered errors.
 
 Mock the `RPCCaller` rather than using a real Deploy Commander instance in component tests.
 

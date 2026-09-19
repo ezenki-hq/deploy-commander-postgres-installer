@@ -1,4 +1,10 @@
-import type { AdminCredentials, LogicalCredentials } from './credentials';
+import type { AdminCredentials } from './credentials';
+import type { LoginCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
+import type { AccessRequest } from './postgresConnectionRequest';
+import { connectionLabels } from './postgresConnectionRequest';
+import { buildAccessService, buildCleanupService } from './postgresAccessPlans';
+import { buildCatalogDeleteHook, buildCatalogHook } from './postgresCatalog';
 import {
   parsePlatformConnection,
   type PlatformConnection,
@@ -86,7 +92,6 @@ function assertNonBlank(value: unknown, label: string): asserts value is string 
     throw new Error(`Invalid ${label}`);
   }
 }
-
 function assertGeneratedDatabase(value: unknown): asserts value is string {
   assertNonBlank(value, 'logical database');
   if (!DATABASE_PATTERN.test(value)) {
@@ -102,8 +107,12 @@ function assertGeneratedUsername(value: unknown): asserts value is string {
 }
 
 function validateAdministrator(administrator: AdminCredentials): void {
-  if (typeof administrator !== 'object' || administrator === null) throw new Error('Invalid administrator credentials');
-  if (typeof administrator.username !== 'string' || !ADMIN_USERNAME_PATTERN.test(administrator.username)) {
+  if (typeof administrator !== 'object' || administrator === null)
+    throw new Error('Invalid administrator credentials');
+  if (
+    typeof administrator.username !== 'string' ||
+    !ADMIN_USERNAME_PATTERN.test(administrator.username)
+  ) {
     throw new Error('Invalid administrator username');
   }
   assertNonBlank(administrator.password, 'administrator password');
@@ -162,26 +171,96 @@ export function buildProvisionPlan(
   });
 }
 
+export interface CleanupPlanInput {
+  administrator: AdminCredentials;
+  login: LoginCredentials;
+  access: AccessRequest;
+  resourceId: string;
+  platform: PlatformConnection;
+  /** Provision operation that owns the managed catalog row, when applicable. */
+  catalogOperationId?: string;
+}
+
+/**
+ * Build either the runner-native cleanup plan or the legacy service-only plan
+ * used by recovery of pre-v2 runs. Keeping the compatibility overload here
+ * lets an older in-flight run finish while all new runs use access metadata.
+ */
+export function buildCleanupPlan(input: CleanupPlanInput): RunnerMetadata;
 export function buildCleanupPlan(
   administrator: AdminCredentials,
   database: string,
   username: string,
   platform: PlatformConnection,
+): RunnerMetadata;
+export function buildCleanupPlan(
+  inputOrAdministrator: CleanupPlanInput | AdminCredentials,
+  databaseOrDatabaseName?: string,
+  username?: string,
+  platformOrPlatform?: PlatformConnection,
 ): RunnerMetadata {
-  assertGeneratedDatabase(database);
+  if (databaseOrDatabaseName === undefined) {
+    const input = inputOrAdministrator as CleanupPlanInput;
+    const service = buildCleanupService(
+      input.access,
+      input.administrator,
+      input.login,
+      input.platform,
+    );
+    const catalogHook = buildCatalogDeleteHook(
+      input.access,
+      input.resourceId,
+      input.catalogOperationId,
+    );
+    return catalogHook ? { ...service, object_hooks: [catalogHook] } : service;
+  }
+
+  const administrator = inputOrAdministrator as AdminCredentials;
+  assertGeneratedDatabase(databaseOrDatabaseName);
   assertGeneratedUsername(username);
-  return buildAdminService(administrator, platform, ['sh', '-ceu', CLEANUP_SCRIPT], {
-    TARGET_DATABASE: database,
+  if (!platformOrPlatform) throw new Error('Invalid platform connection');
+  return buildAdminService(administrator, platformOrPlatform, ['sh', '-ceu', CLEANUP_SCRIPT], {
+    TARGET_DATABASE: databaseOrDatabaseName,
     TARGET_USERNAME: username,
   });
 }
 
 export function buildConnectionMetadata(
+  login: LoginCredentials,
+  access: AccessRequest,
+  platform: PlatformConnection,
+): PostgresConnectionMetadata;
+export function buildConnectionMetadata(
   logical: LogicalCredentials,
   platform: PlatformConnection,
+): PostgresConnectionMetadata;
+export function buildConnectionMetadata(
+  loginOrLogical: LoginCredentials | LogicalCredentials,
+  accessOrPlatform: AccessRequest | PlatformConnection,
+  maybePlatform?: PlatformConnection,
 ): PostgresConnectionMetadata {
+  if (maybePlatform !== undefined) {
+    const login = loginOrLogical as LoginCredentials;
+    const access = accessOrPlatform as AccessRequest;
+    validateLoginForConnection(login);
+    validateAccessForConnection(access);
+    return {
+      host: 'postgres',
+      port: 5432,
+      database: access.scope === 'database' ? access.database : 'postgres',
+      username: login.username,
+      password: login.password,
+      platform_connection: parsePlatformConnection(maybePlatform),
+      access,
+    };
+  }
+
+  const logical = loginOrLogical as LogicalCredentials;
   validateLogical(logical);
+  const platform = accessOrPlatform as PlatformConnection;
   const platformConnection = parsePlatformConnection(platform);
+  // Legacy metadata intentionally has no access discriminator. It is only
+  // accepted by the v1 recovery path; new plans always use the overload above.
   return {
     host: 'postgres',
     port: 5432,
@@ -189,5 +268,61 @@ export function buildConnectionMetadata(
     username: logical.username,
     password: logical.password,
     platform_connection: platformConnection,
+  } as PostgresConnectionMetadata;
+}
+
+function validateLoginForConnection(login: LoginCredentials): void {
+  if (typeof login !== 'object' || login === null || !USERNAME_PATTERN.test(login.username)) {
+    throw new Error('Invalid login username');
+  }
+  assertNonBlank(login.password, 'login password');
+}
+
+function validateAccessForConnection(access: AccessRequest): void {
+  if (typeof access !== 'object' || access === null) throw new Error('Invalid access request');
+  if (access.scope === 'database') {
+    assertNonBlank(access.database, 'database');
+    return;
+  }
+  if (access.scope !== 'full' || typeof access.superuser !== 'boolean') {
+    throw new Error('Invalid access request');
+  }
+}
+
+export interface ConnectionRunPlanInput {
+  administrator: AdminCredentials;
+  login: LoginCredentials;
+  access: AccessRequest;
+  callerId: string;
+  resourceId: string;
+  platform: PlatformConnection;
+  callerLabels: Record<string, string>;
+  operationId?: string;
+}
+
+/** Assemble the complete runner metadata for one approved connection. */
+export function buildConnectionRunPlan(input: ConnectionRunPlanInput): RunnerMetadata {
+  const service = buildAccessService(
+    input.access,
+    input.administrator,
+    input.login,
+    input.platform,
+  );
+  const metadata = buildConnectionMetadata(input.login, input.access, input.platform);
+  const hook = buildCatalogHook(input.access, input.resourceId, input.operationId);
+  return {
+    ...service,
+    connections: {
+      create: [
+        {
+          name: 'postgres-connection',
+          manager: input.callerId,
+          resource: { id: input.resourceId },
+          metadata,
+          labels: connectionLabels(input.access, input.callerLabels),
+        },
+      ],
+    },
+    ...(hook ? { object_hooks: [hook] } : {}),
   };
 }

@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import type { LogicalCredentials } from './credentials';
+import type { LogicalCredentials } from './legacyCredentials';
 import type { PlatformConnection } from './postgresContracts';
 import {
   buildCleanupPlan,
   buildConnectionMetadata,
+  buildConnectionRunPlan,
   buildProvisionPlan,
   CLEANUP_SCRIPT,
   PROVISION_SCRIPT,
 } from './postgresPlans';
 
-const administrator = { username: 'dc_admin_0123456789abcdef0123456789abcdef', password: 'admin-secret' };
+const administrator = {
+  username: 'dc_admin_0123456789abcdef0123456789abcdef',
+  password: 'admin-secret',
+};
 const logical: LogicalCredentials = {
   database: 'db_0123456789abcdef0123456789abcdef',
   username: 'dc_user_0123456789abcdef0123456789abcdef',
@@ -21,6 +25,92 @@ const platform: PlatformConnection = {
 };
 
 describe('postgres administration plans', () => {
+  it('assembles the runner connection contract and database catalog hook', () => {
+    const plan = buildConnectionRunPlan({
+      administrator,
+      login: {
+        username: 'dc_user_fedcba9876543210fedcba9876543210',
+        password: 'logical-secret',
+      },
+      access: { scope: 'database', operation: 'create', database: 'orders' },
+      callerId: 'consumer-manager',
+      resourceId: 'resource-1',
+      platform,
+      callerLabels: { team: 'payments' },
+    });
+
+    expect(plan).toMatchObject({
+      services: { 'postgres-admin': { role: 'runner' } },
+      connections: {
+        create: [
+          {
+            name: 'postgres-connection',
+            manager: 'consumer-manager',
+            resource: { id: 'resource-1' },
+            labels: {
+              team: 'payments',
+              'postgres.access': 'database',
+              'postgres.database': 'orders',
+            },
+          },
+        ],
+      },
+      object_hooks: [
+        {
+          kind: 'connection',
+          name: 'postgres-connection',
+          create: { before: { bindings: expect.any(Object) } },
+        },
+      ],
+    });
+    expect(plan.connections?.create?.[0].metadata).toMatchObject({
+      database: 'orders',
+      access: { scope: 'database', operation: 'create', database: 'orders' },
+    });
+    expect(JSON.stringify(plan.connections?.create?.[0].metadata)).not.toContain(
+      administrator.password,
+    );
+  });
+
+  it('does not catalog full access and cleans only created database records', () => {
+    const plan = buildConnectionRunPlan({
+      administrator,
+      login: {
+        username: 'dc_user_fedcba9876543210fedcba9876543210',
+        password: 'logical-secret',
+      },
+      access: { scope: 'full', superuser: false },
+      callerId: 'consumer-manager',
+      resourceId: 'resource-1',
+      platform,
+      callerLabels: {},
+    });
+    expect(plan.connections?.create?.[0].labels).toEqual({ 'postgres.access': 'full' });
+    expect(plan.connections?.create?.[0].metadata).toMatchObject({
+      database: 'postgres',
+      access: { scope: 'full', superuser: false },
+    });
+    expect(plan.object_hooks).toBeUndefined();
+
+    const cleanup = buildCleanupPlan({
+      administrator,
+      login: {
+        username: 'dc_user_fedcba9876543210fedcba9876543210',
+        password: 'logical-secret',
+      },
+      access: { scope: 'database', operation: 'create', database: 'orders' },
+      resourceId: 'resource-1',
+      platform,
+    });
+    expect(cleanup.object_hooks).toMatchObject([
+      {
+        kind: 'container',
+        name: 'postgres-admin',
+        remove: { after: { bindings: expect.any(Object) } },
+      },
+    ]);
+  });
+
   it('builds an isolated runner-only provisioning plan with environment-bound values', () => {
     const plan = buildProvisionPlan(administrator, logical, platform);
     expect(plan).toEqual({
@@ -95,7 +185,7 @@ fi`);
     expect(PROVISION_SCRIPT).toContain('sleep 2');
     expect(PROVISION_SCRIPT).toContain('>/dev/null 2>&1');
     expect(PROVISION_SCRIPT).toContain("format('CREATE ROLE %I'");
-    expect(PROVISION_SCRIPT).toContain("PASSWORD %L");
+    expect(PROVISION_SCRIPT).toContain('PASSWORD %L');
     expect(PROVISION_SCRIPT).toContain('\\getenv');
     expect(PROVISION_SCRIPT).toContain('\\gexec');
     expect(PROVISION_SCRIPT).not.toContain('set -x');
@@ -124,8 +214,8 @@ fi`);
       },
     });
     expect(CLEANUP_SCRIPT).toContain('pg_terminate_backend(pid)');
-    expect(CLEANUP_SCRIPT).toContain("DROP DATABASE IF EXISTS %I");
-    expect(CLEANUP_SCRIPT).toContain("DROP ROLE IF EXISTS %I");
+    expect(CLEANUP_SCRIPT).toContain('DROP DATABASE IF EXISTS %I');
+    expect(CLEANUP_SCRIPT).toContain('DROP ROLE IF EXISTS %I');
     expect(CLEANUP_SCRIPT).toContain('PostgreSQL cleanup failed');
     expect(CLEANUP_SCRIPT).not.toContain(administrator.password);
   });
@@ -144,16 +234,25 @@ fi`);
   });
 
   it('rejects malformed platform data before building connection metadata', () => {
-    expect(() => buildConnectionMetadata(logical, {
-      type: 'Platform', data: { network: '   ' },
-    })).toThrow('Invalid platform connection');
+    expect(() =>
+      buildConnectionMetadata(logical, {
+        type: 'Platform',
+        data: { network: '   ' },
+      }),
+    ).toThrow('Invalid platform connection');
   });
 
   it('rejects an administrator username in the reserved PostgreSQL namespace', () => {
-    expect(() => buildProvisionPlan({
-      ...administrator,
-      username: 'pg_admin_0123456789abcdef0123456789abcdef',
-    }, logical, platform)).toThrow('Invalid administrator username');
+    expect(() =>
+      buildProvisionPlan(
+        {
+          ...administrator,
+          username: 'pg_admin_0123456789abcdef0123456789abcdef',
+        },
+        logical,
+        platform,
+      ),
+    ).toThrow('Invalid administrator username');
   });
 
   it.each([
@@ -161,7 +260,7 @@ fi`);
     { ...logical, username: 'pg_user;drop role postgres' },
     { ...logical, username: 'pg_user_0123456789abcdef0123456789abcdef' },
     { ...logical, password: '' },
-    ])('rejects unsafe logical credentials %j', (unsafe) => {
+  ])('rejects unsafe logical credentials %j', (unsafe) => {
     expect(() => buildProvisionPlan(administrator, unsafe, platform)).toThrow();
   });
 });
