@@ -3,6 +3,9 @@ import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interfac
 import type { PlatformConnection } from './postgresContracts';
 import {
   findExistingConnection,
+  databaseConnectionState,
+  databaseSuggestions,
+  listResourcePostgresConnections,
   listOwnedPostgresConnections,
   normalizePostgresConnection,
   readOwnedPostgresConnection,
@@ -334,6 +337,29 @@ describe('owned deletion connection snapshots', () => {
     expect(target).not.toBeNull();
     expect(samePostgresConnectionTarget(target!, { ...target!, password: 'changed' })).toBe(false);
     expect(samePostgresConnectionTarget(target!, structuredClone(target!))).toBe(true);
+  });
+});
+
+describe('resource inventory and database state', () => {
+  it('lists all managers on a resource and derives database state', async () => {
+    const first = { ...summary, id: 'connection-a', manager: 'consumer-a', labels: deletionLabels };
+    const second = { ...summary, id: 'connection-b', manager: 'consumer-b', labels: deletionLabels };
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({ items: [first, second], limit: 50, offset: 0, total: 2 }),
+      getConnection: vi.fn().mockImplementation(async (id: string) => ({
+        ...full(deletionMetadata(), id),
+        connection: { ...(id === 'connection-a' ? first : second) },
+        config: { ...full(deletionMetadata(), id).config, manager: id === 'connection-a' ? 'consumer-a' : 'consumer-b' },
+      })),
+    } as unknown as RPCCaller;
+    const targets = await listResourcePostgresConnections(caller, 'resource-1', platform);
+    expect(targets.map(({ managerId, access, origin }) => ({ managerId, database: access.scope === 'database' ? access.database : null, origin }))).toEqual([
+      { managerId: 'consumer-a', database: 'orders', origin: 'managed' },
+      { managerId: 'consumer-b', database: 'orders', origin: 'managed' },
+    ]);
+    expect(caller.getConnections).toHaveBeenCalledWith({ resource: 'resource-1', include_labels: true, limit: 50, offset: 0 });
+    expect(databaseConnectionState(targets, 'orders')).toEqual({ database: 'orders', origin: 'managed', connectionIds: ['connection-a', 'connection-b'] });
+    expect(databaseSuggestions(targets)).toEqual(['orders']);
   });
 });
 

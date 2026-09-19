@@ -1,8 +1,8 @@
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
-import { PostgresRecoveryRequiredError } from './postgresErrors';
+import { PostgresRecoveryRequiredError, PostgresRequestError } from './postgresErrors';
 import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
-import type { AccessRequest } from './postgresConnectionRequest';
-import { sameLabels } from './postgresConnectionRequest';
+import type { AccessRequest, DatabaseOrigin } from './postgresConnectionRequest';
+import { resolveDatabaseOrigin, sameLabels } from './postgresConnectionRequest';
 
 /** The durable identity of a PostgreSQL connection request. */
 export interface ConnectionIdentity {
@@ -15,7 +15,7 @@ export interface ConnectionIdentity {
 
 /** Optional access/label fields preserve compatibility with v1 run recovery. */
 export interface ExpectedConnectionIdentity {
-  managerId: string;
+  managerId?: string;
   resourceId: string;
   access?: AccessRequest;
   labels?: Record<string, string>;
@@ -147,7 +147,7 @@ function validateSummary(
     nonBlank(value.id) &&
     (!expected.connectionId || value.id === expected.connectionId) &&
     nonBlank(value.manager) &&
-    value.manager === expected.managerId &&
+    (expected.managerId === undefined || value.manager === expected.managerId) &&
     nonBlank(value.resource) &&
     value.resource === expected.resourceId &&
     value.external === false &&
@@ -199,7 +199,7 @@ function validatePage(
 
 function normalizeExpected(expected: ExpectedConnectionIdentity): ExpectedConnectionIdentity {
   if (
-    !nonBlank(expected.managerId) ||
+    (expected.managerId !== undefined && !nonBlank(expected.managerId)) ||
     !nonBlank(expected.resourceId) ||
     (expected.connectionId !== undefined && !nonBlank(expected.connectionId)) ||
     (expected.access !== undefined && !validAccess(expected.access))
@@ -237,7 +237,7 @@ function normalizeConnection(
     (identity.connectionId !== undefined && connection.id !== identity.connectionId) ||
     !validateSummary(connection, identity) ||
     !nonBlank(config.manager) ||
-    config.manager !== identity.managerId ||
+    (identity.managerId !== undefined && config.manager !== identity.managerId) ||
     !nonBlank(config.resource) ||
     config.resource !== identity.resourceId
   ) {
@@ -320,7 +320,7 @@ async function listConnectionSummaries(
     let response: unknown;
     try {
       response = await caller.getConnections({
-        manager: expected.managerId,
+        ...(expected.managerId ? { manager: expected.managerId } : {}),
         resource: expected.resourceId,
         ...(filterLabels ? { labels: filterLabels, label_match: 'all' as const } : {}),
         include_labels: true,
@@ -380,6 +380,7 @@ export interface PostgresConnectionTarget {
   resourceId: string;
   external: false;
   access: AccessRequest;
+  origin: DatabaseOrigin | null;
   username: string;
   password: string;
   labels: Record<string, string>;
@@ -395,6 +396,17 @@ function targetOf(value: RPC.CreateConnection): PostgresConnectionTarget {
   ) {
     throw invalidConnection();
   }
+  const labels = parseLabels(value.connection.labels);
+  let origin: DatabaseOrigin | null = null;
+  if (Object.keys(labels).some((key) => key.startsWith('postgres.'))) {
+    try {
+      origin = resolveDatabaseOrigin(metadata.access, labels).origin;
+    } catch {
+      throw invalidConnection();
+    }
+  } else if (metadata.access.scope === 'database') {
+    origin = metadata.access.operation === 'create' ? 'managed' : 'existing';
+  }
   return {
     id: value.connection.id,
     managerId: value.connection.manager,
@@ -403,7 +415,8 @@ function targetOf(value: RPC.CreateConnection): PostgresConnectionTarget {
     access: structuredClone(metadata.access),
     username: metadata.username,
     password: metadata.password,
-    labels: parseLabels(value.connection.labels),
+    labels,
+    origin,
     platform: parseAuthoritativePlatform(metadata.platform_connection),
   };
 }
@@ -426,6 +439,57 @@ export async function listOwnedPostgresConnections(
       ),
     ),
   );
+}
+
+export async function listResourcePostgresConnections(
+  caller: RPCCaller,
+  resourceId: string,
+  platform: PlatformConnection,
+): Promise<PostgresConnectionTarget[]> {
+  const expected = normalizeExpected({ resourceId });
+  const summaries = await listConnectionSummaries(caller, expected);
+  return Promise.all(
+    summaries.map(async (summary) =>
+      targetOf(
+        await readConnection(caller, summary, { resourceId }, platform, {
+          requireAccess: true,
+          requirePlatformMatch: true,
+        }),
+      ),
+    ),
+  );
+}
+
+export interface DatabaseConnectionState {
+  database: string;
+  origin: DatabaseOrigin | null;
+  connectionIds: string[];
+}
+
+export function databaseConnectionState(
+  targets: PostgresConnectionTarget[],
+  database: string,
+): DatabaseConnectionState {
+  const matching = targets.filter(
+    (target) => target.access.scope === 'database' && target.access.database === database,
+  );
+  const origins = new Set(matching.map((target) => target.origin).filter(Boolean));
+  if (origins.size > 1) {
+    throw new PostgresRequestError(409, `Conflicting PostgreSQL database origin for ${database}`);
+  }
+  return {
+    database,
+    origin: origins.size === 1 ? [...origins][0] ?? null : matching.some((t) => t.origin === null) ? null : null,
+    connectionIds: matching.map((target) => target.id),
+  };
+}
+
+export function databaseSuggestions(targets: PostgresConnectionTarget[]): string[] {
+  return [...new Set(
+    targets
+      .filter((target) => target.access.scope === 'database')
+      .map((target) => target.access.database),
+  )].sort();
 }
 
 function rpcStatus(value: unknown): number | null {
