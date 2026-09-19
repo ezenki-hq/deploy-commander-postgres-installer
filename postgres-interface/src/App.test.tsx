@@ -93,7 +93,11 @@ describe('run-backed App boot', () => {
   });
   it('renders connection mode without discovering a resource', async () => {
     const current = fixture(
-      { getCallingManager: vi.fn(() => new Promise(() => undefined)) },
+      {
+        getCallingManager: vi.fn(
+          async (): Promise<string | null> => await new Promise(() => undefined),
+        ),
+      },
       { action: 'create-connection' },
     );
     render(<App createClient={current.factory} />);
@@ -104,14 +108,16 @@ describe('run-backed App boot', () => {
   });
   it('shows create approval while caller lookup is pending', async () => {
     const current = fixture(
-      { getCallingManager: vi.fn(() => new Promise(() => undefined)) },
+      {
+        getCallingManager: vi.fn(
+          async (): Promise<string | null> => await new Promise(() => undefined),
+        ),
+      },
       { action: 'create-connection', scope: 'database', operation: 'create', database: 'orders' },
     );
     render(<App createClient={current.factory} />);
 
-    expect(
-      await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' }),
-    ).toBeVisible();
+    expect(await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' })).toBeVisible();
     expect(screen.getByRole('dialog')).toHaveTextContent('Identifying the calling manager');
     expect(current.caller.getMyResources).not.toHaveBeenCalled();
     expect(current.caller.start).not.toHaveBeenCalled();
@@ -119,20 +125,23 @@ describe('run-backed App boot', () => {
   it.each([
     ['missing', vi.fn().mockResolvedValue(null)],
     ['failed', vi.fn().mockRejectedValue(new Error('transport detail'))],
-  ])('shows a blocked create approval when caller lookup is %s', async (_case, getCallingManager) => {
-    const current = fixture(
-      { getCallingManager },
-      { action: 'create-connection', scope: 'database', operation: 'create', database: 'orders' },
-    );
-    render(<App createClient={current.factory} />);
+  ])(
+    'shows a blocked create approval when caller lookup is %s',
+    async (_case, getCallingManager) => {
+      const current = fixture(
+        { getCallingManager },
+        { action: 'create-connection', scope: 'database', operation: 'create', database: 'orders' },
+      );
+      render(<App createClient={current.factory} />);
 
-    expect(
-      await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' }),
-    ).toBeVisible();
-    expect(await screen.findByRole('alert')).toHaveTextContent('A calling manager is required');
-    expect(screen.queryByRole('button', { name: 'Approve connection' })).not.toBeInTheDocument();
-    expect(current.caller.start).not.toHaveBeenCalled();
-  });
+      expect(
+        await screen.findByRole('dialog', { name: 'Approve PostgreSQL access?' }),
+      ).toBeVisible();
+      expect(await screen.findByRole('alert')).toHaveTextContent('A calling manager is required');
+      expect(screen.queryByRole('button', { name: 'Approve connection' })).not.toBeInTheDocument();
+      expect(current.caller.start).not.toHaveBeenCalled();
+    },
+  );
   it('passes complete connection metadata into the approval flow', async () => {
     const current = fixture(
       {},
@@ -356,14 +365,18 @@ describe('run-backed App boot', () => {
       { action: 'delete-connection' },
     );
     render(<App createClient={current.factory} />);
-    expect(await screen.findByRole('dialog', { name: 'Delete PostgreSQL connection?' })).toBeVisible();
+    expect(
+      await screen.findByRole('dialog', { name: 'Delete PostgreSQL connection?' }),
+    ).toBeVisible();
     expect(current.caller.getCallingManager).toHaveBeenCalledOnce();
   });
 
   it('blocks malformed delete metadata with a normalized 400 before discovery', async () => {
     const current = fixture({}, { action: 'delete-connection', connection: '' });
     render(<App createClient={current.factory} />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid PostgreSQL connection deletion request');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Invalid PostgreSQL connection deletion request',
+    );
     expect(current.wire.close).not.toHaveBeenCalled();
     expect(current.caller.getMyResources).not.toHaveBeenCalled();
   });

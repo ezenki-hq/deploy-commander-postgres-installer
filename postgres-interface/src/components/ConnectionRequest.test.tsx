@@ -176,10 +176,10 @@ describe('ConnectionRequest child errors', () => {
     expect(caller.start).not.toHaveBeenCalled();
     await waitFor(() => expect(wire.close).toHaveBeenCalledTimes(1));
     expect(wire.close).toHaveBeenCalledWith({
-        manager: 'postgres-manager',
-        ok: false,
-        error: { status: 499, message: 'Database access was cancelled' },
-      });
+      manager: 'postgres-manager',
+      ok: false,
+      error: { status: 499, message: 'Database access was cancelled' },
+    });
   });
 });
 

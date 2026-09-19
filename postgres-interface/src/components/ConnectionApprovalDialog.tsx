@@ -2,7 +2,11 @@ import { useState } from 'react';
 import ActionApprovalDialog from './ActionApprovalDialog';
 import ActionButton from './ActionButton';
 import type { ApprovalContext } from '../lib/createPostgresConnection';
-import { generateDatabaseName, type AccessRequest, type ParsedConnectionRequest } from '../lib/postgresConnectionRequest';
+import {
+  generateDatabaseName,
+  type AccessRequest,
+  type ParsedConnectionRequest,
+} from '../lib/postgresConnectionRequest';
 import type { ActionGateState } from '../lib/actionGate';
 
 export interface ConnectionApprovalDialogProps {
@@ -206,7 +210,11 @@ export function ConnectionApprovalDialog({
                   className="mt-2 block min-h-11 w-full rounded-xl border border-slate-300 px-3 py-2 font-mono"
                 />
               </label>
-              <ActionButton tone="secondary" disabled={busy} onClick={() => setDatabase(generateName())}>
+              <ActionButton
+                tone="secondary"
+                disabled={busy}
+                onClick={() => setDatabase(generateName())}
+              >
                 Generate database name
               </ActionButton>
               {!valid && database.length > 0 && (
@@ -256,9 +264,13 @@ export function ConnectionApprovalDialog({
     </>
   ) : null;
 
-  const phase = gate.kind === 'preparing' || gate.kind === 'blocked' || gate.kind === 'ready' || gate.kind === 'executing'
-    ? gate.kind
-    : 'preparing';
+  const phase =
+    gate.kind === 'preparing' ||
+    gate.kind === 'blocked' ||
+    gate.kind === 'ready' ||
+    gate.kind === 'executing'
+      ? gate.kind
+      : 'preparing';
   const status =
     gate.kind === 'preparing'
       ? gate.callerId
@@ -271,7 +283,7 @@ export function ConnectionApprovalDialog({
   return (
     <ActionApprovalDialog
       title="Approve PostgreSQL access?"
-      callerId={gate.callerId}
+      callerId={gate.kind === 'closed' ? null : gate.callerId}
       phase={phase}
       status={status}
       error={gate.kind === 'blocked' ? gate.failure.message : undefined}

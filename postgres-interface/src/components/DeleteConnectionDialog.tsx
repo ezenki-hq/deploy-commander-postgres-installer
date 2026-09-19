@@ -21,7 +21,12 @@ function deletesDatabase(choice: DeleteConnectionApprovalContext['choices'][numb
   return choice.access.scope === 'database' && choice.access.operation === 'create';
 }
 
-export default function DeleteConnectionDialog({ gate, onApprove, onReject, onRetry }: DeleteConnectionDialogProps) {
+export default function DeleteConnectionDialog({
+  gate,
+  onApprove,
+  onReject,
+  onRetry,
+}: DeleteConnectionDialogProps) {
   const context = gate.kind === 'ready' || gate.kind === 'executing' ? gate.context : null;
   const selected = context?.requestedConnectionId ?? context?.choices[0]?.id ?? null;
   const selectedChoice = context?.choices.find((choice) => choice.id === selected) ?? null;
@@ -32,7 +37,9 @@ export default function DeleteConnectionDialog({ gate, onApprove, onReject, onRe
           <legend className="text-sm font-semibold text-slate-800">Connection to delete</legend>
           {context.choices.map((choice) => (
             <div key={choice.id} className="rounded-xl border border-slate-200 p-3 text-sm">
-              <span className="block break-all font-mono font-semibold text-slate-800">{choice.id}</span>
+              <span className="block break-all font-mono font-semibold text-slate-800">
+                {choice.id}
+              </span>
               <span className="block text-slate-600">{description(choice)}</span>
             </div>
           ))}
@@ -56,14 +63,27 @@ export default function DeleteConnectionDialog({ gate, onApprove, onReject, onRe
   return (
     <ActionApprovalDialog
       title="Delete PostgreSQL connection?"
-      callerId={gate.callerId}
-      phase={gate.kind}
-      status={gate.kind === 'executing' ? 'Deleting PostgreSQL connection…' : 'Checking connection ownership before approval…'}
+      callerId={gate.kind === 'closed' ? null : gate.callerId}
+      phase={gate.kind === 'closed' ? 'preparing' : gate.kind}
+      status={
+        gate.kind === 'executing'
+          ? 'Deleting PostgreSQL connection…'
+          : 'Checking connection ownership before approval…'
+      }
       error={gate.kind === 'blocked' ? gate.failure.message : undefined}
       onReject={onReject}
-      onRetry={onRetry}
-      retryAction={<ActionButton tone="secondary" onClick={onRetry}>Retry</ActionButton>}
-      primaryAction={selectedChoice ? <ActionButton tone="danger" onClick={() => onApprove(selectedChoice.id)}>Delete connection</ActionButton> : undefined}
+      retryAction={
+        <ActionButton tone="secondary" onClick={onRetry}>
+          Retry
+        </ActionButton>
+      }
+      primaryAction={
+        selectedChoice ? (
+          <ActionButton tone="danger" onClick={() => onApprove(selectedChoice.id)}>
+            Delete connection
+          </ActionButton>
+        ) : undefined
+      }
     >
       {controls}
     </ActionApprovalDialog>

@@ -95,12 +95,19 @@ describe('ConnectionApprovalDialog', () => {
       gate: {
         kind: 'ready',
         callerId: 'consumer-manager',
-        context: { ...completeContext, requestedAccess: null, catalogDatabases: ['orders', 'analytics'] },
+        context: {
+          ...completeContext,
+          requestedAccess: null,
+          catalogDatabases: ['orders', 'analytics'],
+        },
       },
       request: { access: null, labels: {} },
     });
     await user.click(screen.getByRole('radio', { name: /use an existing database/i }));
-    await user.selectOptions(screen.getByRole('combobox', { name: /available database/i }), 'analytics');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /available database/i }),
+      'analytics',
+    );
     await user.click(screen.getByRole('button', { name: /approve connection/i }));
     expect(onApprove).toHaveBeenCalledWith({
       scope: 'database',

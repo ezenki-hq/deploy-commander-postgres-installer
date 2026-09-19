@@ -56,7 +56,10 @@ export default function ActionApprovalDialog({
         </p>
 
         {phase === 'blocked' && error && (
-          <p role="alert" className="mt-5 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-900">
+          <p
+            role="alert"
+            className="mt-5 rounded-lg border border-rose-300 bg-rose-50 p-3 text-sm text-rose-900"
+          >
             {error}
           </p>
         )}

@@ -141,7 +141,7 @@ describe('DeleteConnectionRequest', () => {
       'PostgreSQL connection deletion was cancelled',
     ],
     ['PostgreSQL recovery is required', 503, 'PostgreSQL recovery is required'],
-  ] as const)('shows %s in the approval gate', async (error) => {
+  ])('shows %s in the approval gate', async (error: string) => {
     const wire = { close: vi.fn() } as unknown as Wire;
     render(<DeleteConnectionRequest {...base({} as RPCCaller, wire)} initialError={error} />);
     expect(await screen.findByRole('alert')).toHaveTextContent(error);
@@ -195,6 +195,8 @@ describe('DeleteConnectionRequest', () => {
         initialError="logical-password appeared"
       />,
     );
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to delete the PostgreSQL connection');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Unable to delete the PostgreSQL connection',
+    );
   });
 });

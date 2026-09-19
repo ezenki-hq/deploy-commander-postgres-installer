@@ -17,12 +17,7 @@ import {
   PostgresRequestError,
 } from '../lib/postgresErrors';
 import type { ParsedConnectionRequest } from '../lib/postgresConnectionRequest';
-import {
-  actionGateReducer,
-  initialActionGate,
-  type ActionGateFailure,
-  type ActionGateState,
-} from '../lib/actionGate';
+import { actionGateReducer, initialActionGate, type ActionGateFailure } from '../lib/actionGate';
 
 const EMPTY_METADATA: ParsedConnectionRequest = { access: null, labels: {} };
 
@@ -205,7 +200,17 @@ export default function ConnectionRequest({
       pendingRef.current?.({ allowed: false });
       pendingRef.current = null;
     };
-  }, [attempt, caller, events, wire, currentManagerId, metadata, initialError, initialResult, closeOnce]);
+  }, [
+    attempt,
+    caller,
+    events,
+    wire,
+    currentManagerId,
+    metadata,
+    initialError,
+    initialResult,
+    closeOnce,
+  ]);
 
   const reject = () => {
     if (gate.kind === 'executing' || closedRef.current) return;
@@ -230,10 +235,15 @@ export default function ConnectionRequest({
 
   if (gate.kind === 'closed') return null;
 
-  const progressTitle = gate.kind === 'executing' ? 'Creating PostgreSQL connection' : 'Preparing PostgreSQL connection';
+  const progressTitle =
+    gate.kind === 'executing'
+      ? 'Creating PostgreSQL connection'
+      : 'Preparing PostgreSQL connection';
   return (
     <>
-      <ManagerShell badge={{ label: gate.kind === 'executing' ? 'Connecting' : 'Preparing', tone: 'progress' }}>
+      <ManagerShell
+        badge={{ label: gate.kind === 'executing' ? 'Connecting' : 'Preparing', tone: 'progress' }}
+      >
         <StatusPanel
           tone="progress"
           eyebrow="Logical database request"
