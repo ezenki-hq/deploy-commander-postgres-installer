@@ -279,6 +279,47 @@ const plan = {
 The hostname `postgres` resolves for a workload whose runner service includes this
 platform connection. Code outside that network must not assume the alias is resolvable.
 
+## Delete a connection
+
+The consuming manager may request deletion of one of its own connections:
+
+```json
+{ "action": "delete-connection", "connection": "connection-1" }
+```
+
+Or omit `connection` to have the user select from connections owned by the trusted caller:
+
+```json
+{ "action": "delete-connection" }
+```
+
+Caller identity is supplied by Deploy Commander and cannot be forged in metadata. A
+specified connection that is missing or owned by another manager returns the same `404`.
+Every deletion requires explicit confirmation. On success, the child closes with only the
+deleted ID:
+
+```json
+{
+  "manager": "postgres-manager-id",
+  "ok": true,
+  "result": { "connection": "connection-1" }
+}
+```
+
+Cleanup always finishes before the connection record is deleted:
+
+| Connection access                 | PostgreSQL effect                                       |
+| --------------------------------- | ------------------------------------------------------- |
+| Database, `operation: "create"`   | Delete the generated database and user.                 |
+| Database, `operation: "existing"` | Preserve the database; delete only the generated user.  |
+| Full access, constrained          | Preserve all databases; delete only the generated user. |
+| Full access, superuser            | Preserve all databases; delete only the generated user. |
+
+If a response is lost, reopen the child workflow. Durable cleanup history is reconciled by
+the exact caller, resource, user, access mode, credentials, and platform before a retry is
+accepted; successful cleanup is reused and record deletion is retried without starting a
+second cleanup. A changed target or ambiguous history requires recovery.
+
 ## Database catalog
 
 The PostgreSQL manager maintains a credential-free database catalog in its manager database.
@@ -302,14 +343,14 @@ database name, and labels.
 Failures close the child with `ok: false`. Statuses are normalized; consumers should not
 depend on internal runner messages or SQL details.
 
-| Status | Meaning                                                                      | Consumer action                                                                                          |
-| ------ | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `400`  | Invalid request metadata, missing caller context, or invalid approved access | Fix the request or parent/child invocation; do not retry unchanged.                                      |
-| `404`  | The requested existing database was not found                                | Choose a valid database and ask for a new approval.                                                      |
-| `409`  | An operation lock or exact-identity/label conflict prevents the request      | Serialize requests, inspect existing connections, and retry deliberately after the conflict is resolved. |
-| `499`  | The user rejected or cancelled approval                                      | Stop; retry only after a new user action.                                                                |
-| `500`  | Provisioning, persistence, or compensation failed                            | Report a non-secret error and ask the user to retry deliberately.                                        |
-| `503`  | PostgreSQL installation or run recovery is required                          | Ask the PostgreSQL manager owner to open its dashboard and complete recovery before retrying.            |
+| Status | Meaning                                                                          | Consumer action                                                                                          |
+| ------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `400`  | Invalid request metadata, missing caller context, or invalid approved access     | Fix the request or parent/child invocation; do not retry unchanged.                                      |
+| `404`  | The requested existing database was not found                                    | Choose a valid database and ask for a new approval.                                                      |
+| `409`  | An operation lock or exact-identity/label conflict prevents the request          | Serialize requests, inspect existing connections, and retry deliberately after the conflict is resolved. |
+| `499`  | The user rejected or cancelled approval                                          | Stop; retry only after a new user action.                                                                |
+| `500`  | Provisioning, cleanup, persistence, or compensation failed                       | Report a non-secret error and ask the user to retry deliberately.                                        |
+| `503`  | PostgreSQL installation, malformed deletion history, or run recovery is required | Ask the PostgreSQL manager owner to open its dashboard and complete recovery before retrying.            |
 
 ## Recovery and retry behavior
 
@@ -342,8 +383,8 @@ connection merely because it shares the same calling manager or resource.
   metadata.
 - Do not use the administrator account or issue provisioning SQL yourself.
 - Tearing down the PostgreSQL installation is an administrative manager action and affects
-  all logical connections. This child interface does not define individual connection
-  deletion.
+  all logical connections. Individual deletion is available only through the owned
+  `delete-connection` child action described above.
 
 The implementation uses the standard `ezenki/deploy-commander-runner:latest` runner and
 the regular `postgres:15` image. Consumers should treat those implementation details as

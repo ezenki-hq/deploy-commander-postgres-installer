@@ -6,10 +6,20 @@ This manager installs one persistent PostgreSQL 15 service and provisions isolat
 
 For the complete consumer-facing contract and an integration example, see [PostgreSQL Manager Interface Guide](../docs/integrations/POSTGRES_MANAGER_INTERFACE_GUIDE.md).
 
-The parent interface starts this manager with the exact metadata object:
+The parent interface starts this manager with one of these exact metadata objects:
 
 ```json
 { "action": "create-connection" }
+```
+
+Delete a specific owned connection, or omit `connection` to let the user select one:
+
+```json
+{ "action": "delete-connection", "connection": "<connection-id>" }
+```
+
+```json
+{ "action": "delete-connection" }
 ```
 
 Any additional or unknown field selects the normal manager dashboard. In connection mode, the caller identity is supplied by Deploy Commander. It is not accepted from editable metadata.
@@ -36,6 +46,8 @@ Each logical connection gets a generated database, role, username, and password.
 Installation and teardown are resource-based and use exact run IDs. Runner status values are queued `0`, running `1`, done `2`, and failed `3`; `getRun(id)` is the authoritative fallback when an event is missed. Provisioning waits for PostgreSQL readiness, uses identifier/value-safe SQL, and is idempotent. Connection recovery uses versioned run notes/configuration and Deploy Commander connection records.
 
 Connection requests can request approval, automatically install PostgreSQL when needed, then provision an isolated database. Duplicate connections are checked before permission prompting or provisioning. A failed or ambiguous provisioning operation is recovered with a compensating cleanup run. A Deploy Commander connection is created only after provisioning succeeds.
+
+Every deletion requires explicit confirmation and only connections owned by the trusted calling manager are offered. Cleanup completes before the Deploy Commander connection record is removed. A connection-created database is deleted together with its generated user; existing databases and full-access databases are preserved while only the generated user is removed. Successful deletion closes the child with `{ "connection": "<deleted-connection-id>" }`. Retries reconcile durable cleanup runs and never start a duplicate cleanup for the same target.
 
 Remembered connection approval is installation-scoped and stored in browser local storage under a key containing the current manager and PostgreSQL resource IDs. Resetting approval removes only that exact key. A storage failure never grants permission implicitly.
 

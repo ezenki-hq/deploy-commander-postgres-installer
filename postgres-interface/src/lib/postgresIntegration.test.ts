@@ -113,7 +113,12 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
     expect(
       await query(`SELECT datdba::regrole::text FROM pg_database WHERE datname = '${database}'`),
     ).toBe(login.username);
-    await cleanupAccess(access, 7);
+    const firstCleanup = await cleanupAccess(access, 7);
+    const secondCleanup = await cleanupAccess(access, 7);
+    for (const output of [firstCleanup, secondCleanup]) {
+      expect(`${output.stdout}\n${output.stderr}`).not.toContain(password);
+      expect(`${output.stdout}\n${output.stderr}`).not.toContain(login.password);
+    }
     expect(await query(`SELECT count(*) FROM pg_database WHERE datname = '${database}'`)).toBe('0');
     expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
       '0',
@@ -139,7 +144,12 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
         database,
         'CREATE TABLE cleanup_marker (id integer PRIMARY KEY)',
       );
-      await cleanupAccess(access, 8);
+      const firstCleanup = await cleanupAccess(access, 8);
+      const secondCleanup = await cleanupAccess(access, 8);
+      for (const output of [firstCleanup, secondCleanup]) {
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(password);
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(testLogin(8).password);
+      }
       expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
         '0',
       );
@@ -177,7 +187,12 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
         await query(`SELECT rolcreatedb FROM pg_roles WHERE rolname = '${login.username}'`),
       ).toBe('t');
     } finally {
-      await cleanupAccess(access, 10);
+      const firstCleanup = await cleanupAccess(access, 10);
+      const secondCleanup = await cleanupAccess(access, 10);
+      for (const output of [firstCleanup, secondCleanup]) {
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(password);
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(testLogin(10).password);
+      }
       expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
         '0',
       );
@@ -194,7 +209,12 @@ describe.skipIf(!container)('opt-in PostgreSQL access-mode integration', () => {
       );
       expect(login.username).not.toBe(administrator.username);
     } finally {
-      await cleanupAccess(access, 11);
+      const firstCleanup = await cleanupAccess(access, 11);
+      const secondCleanup = await cleanupAccess(access, 11);
+      for (const output of [firstCleanup, secondCleanup]) {
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(password);
+        expect(`${output.stdout}\n${output.stderr}`).not.toContain(testLogin(11).password);
+      }
       expect(await query(`SELECT count(*) FROM pg_roles WHERE rolname = '${login.username}'`)).toBe(
         '0',
       );
