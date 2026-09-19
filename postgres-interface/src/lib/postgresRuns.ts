@@ -86,6 +86,39 @@ export async function readLatestRun(caller: RPCCaller): Promise<RPC.RunItem | nu
   const items = page(result, 0, 1);
   return items[0] ?? null;
 }
+
+export async function listRunsByAction(
+  caller: RPCCaller,
+  action: 'cleanup-connection',
+): Promise<RPC.RunItem[]> {
+  const runs: RPC.RunItem[] = [];
+  const seen = new Set<string>();
+  let expectedTotal: number | null = null;
+  for (let offset = 0; ; offset += PAGE_LIMIT) {
+    let response: unknown;
+    try {
+      response = await caller.getRuns({
+        action,
+        sort: '-created_at',
+        limit: PAGE_LIMIT,
+        offset,
+      });
+    } catch {
+      throw fail();
+    }
+    const items = page(response, offset, PAGE_LIMIT);
+    const total = (response as { total: number }).total;
+    if (expectedTotal === null) expectedTotal = total;
+    if (total !== expectedTotal) throw fail();
+    for (const item of items) {
+      if (item.action !== action || seen.has(item.id)) throw fail();
+      seen.add(item.id);
+      runs.push(item);
+    }
+    if (offset + items.length >= total) break;
+  }
+  return runs;
+}
 export async function readPostgresLifecycle(caller: RPCCaller) {
   const latest = await readLatestRun(caller);
   return { latest, lifecycle: resolvePostgresLifecycle(latest) };

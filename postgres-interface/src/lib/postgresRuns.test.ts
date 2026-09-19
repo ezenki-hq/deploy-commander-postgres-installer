@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import {
   findCorrelatedRun,
+  listRunsByAction,
   readExactRun,
   readLatestRun,
   resolvePostgresLifecycle,
 } from './postgresRuns';
+import { PostgresRecoveryRequiredError } from './postgresErrors';
 const run = (action: string, status: number, id = `${action}-${status}`): RPC.RunItem => ({
   id,
   action,
@@ -154,5 +156,62 @@ describe('postgres runs', () => {
     await expect(findCorrelatedRun(c({ getRuns: g }), 'create', 'note-2')).resolves.toEqual({
       kind: 'ambiguous',
     });
+  });
+
+  it('lists one action across stable pages', async () => {
+    const first = Array.from({ length: 50 }, (_, index) =>
+      run('cleanup-connection', 2, `cleanup-${index}`),
+    );
+    const getRuns = vi
+      .fn()
+      .mockResolvedValueOnce({ items: first, limit: 50, offset: 0, total: 51 })
+      .mockResolvedValueOnce({
+        items: [run('cleanup-connection', 1, 'cleanup-50')],
+        limit: 50,
+        offset: 50,
+        total: 51,
+      });
+    await expect(listRunsByAction(c({ getRuns }), 'cleanup-connection')).resolves.toHaveLength(51);
+    expect(getRuns).toHaveBeenNthCalledWith(1, {
+      action: 'cleanup-connection',
+      sort: '-created_at',
+      limit: 50,
+      offset: 0,
+    });
+  });
+
+  it.each([
+    { items: [run('create', 2)], limit: 50, offset: 0, total: 1 },
+    {
+      items: [run('cleanup-connection', 2, 'duplicate'), run('cleanup-connection', 2, 'duplicate')],
+      limit: 50,
+      offset: 0,
+      total: 2,
+    },
+    { items: [run('cleanup-connection', 2)], limit: 50, offset: 0, total: 2 },
+  ])('rejects ignored filters, duplicate ids, or malformed pages %#', async (response) => {
+    await expect(
+      listRunsByAction(c({ getRuns: vi.fn().mockResolvedValue(response) }), 'cleanup-connection'),
+    ).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
+  it('rejects a changed total between action pages', async () => {
+    const getRuns = vi
+      .fn()
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 50 }, (_, index) => run('cleanup-connection', 2, `r-${index}`)),
+        limit: 50,
+        offset: 0,
+        total: 51,
+      })
+      .mockResolvedValueOnce({
+        items: [run('cleanup-connection', 2, 'r-50')],
+        limit: 50,
+        offset: 50,
+        total: 52,
+      });
+    await expect(listRunsByAction(c({ getRuns }), 'cleanup-connection')).rejects.toThrow(
+      PostgresRecoveryRequiredError,
+    );
   });
 });

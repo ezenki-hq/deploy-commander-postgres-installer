@@ -45,6 +45,7 @@ export interface CleanupRunRecord {
   /** @deprecated v1 workflow compatibility. */ username: string;
   /** The note protocol used to create this run. */
   version: 'v1' | 'v2';
+  platform?: PlatformConnection;
   /** Managed catalog owner, when cleanup metadata carries one. */
   catalogOperationId?: string;
 }
@@ -488,7 +489,7 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
   }
   validateAdminEnvironment(service.environment);
   if (!Array.isArray(service.connections) || service.connections.length !== 1) throw recovery();
-  validatePlatform(service.connections[0]);
+  const platform = validatePlatform(service.connections[0]);
   const mode = service.environment.ACCESS_MODE;
   let access: AccessRequest;
   if (mode === 'create-database' || mode === 'existing-database')
@@ -512,6 +513,7 @@ export function parseCleanupRun(value: unknown): CleanupRunRecord {
     access,
     login: { username: target.username, password: target.password },
     labels: connectionLabels(access, {}),
+    platform,
     ...(access.scope === 'database' &&
     access.operation === 'create' &&
     Array.isArray(metadata.object_hooks) &&

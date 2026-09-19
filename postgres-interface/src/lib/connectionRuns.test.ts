@@ -206,6 +206,7 @@ describe('connection run records', () => {
       identity,
       access,
       login: { username, password },
+      platform,
     });
   });
   it('rejects identity and structural mismatches', () => {
@@ -261,6 +262,7 @@ describe('connection run records', () => {
       access: { scope: 'database', operation: 'create' },
       login: { username, password: '' },
     });
+    expect(parseCleanupRun(result)).not.toHaveProperty('platform');
   });
   it('requires catalog hooks for created database cleanup', () => {
     const result = runResult('cleanup-connection', {
