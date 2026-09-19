@@ -1,5 +1,6 @@
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
+import { OperationBusyError } from './postgresErrors';
 
 export type RunStatus = 0 | 1 | 2 | 3;
 export type PostgresLifecycle =
@@ -19,6 +20,11 @@ const record = (v: unknown): v is Record<string, unknown> =>
 const validStatus = (v: unknown): v is RunStatus => v === 0 || v === 1 || v === 2 || v === 3;
 const validAction = (v: unknown): v is string =>
   v === 'create' || v === 'teardown' || v === 'create-connection' || v === 'cleanup-connection';
+
+export type ActivePostgresRun = {
+  action: 'create' | 'teardown' | 'create-connection' | 'cleanup-connection';
+  runId: string;
+};
 
 function validRun(v: unknown): v is RPC.RunItem {
   if (
@@ -58,7 +64,7 @@ function page(v: unknown, offset: number, limit: number): RPC.RunItem[] {
   return v.items;
 }
 
-export function resolvePostgresLifecycle(latest: RPC.RunItem | null): PostgresLifecycle {
+function resolveLegacyLifecycle(latest: RPC.RunItem | null): PostgresLifecycle {
   if (latest === null) return { kind: 'not-installed' };
   if (!validRun(latest)) throw fail();
   if (latest.action === 'create') {
@@ -74,6 +80,49 @@ export function resolvePostgresLifecycle(latest: RPC.RunItem | null): PostgresLi
   if (latest.action === 'create-connection' || latest.action === 'cleanup-connection')
     return { kind: 'installed', runId: latest.id, operationBusy: latest.status < 2 };
   throw fail();
+}
+
+export function resolvePostgresLifecycle(
+  resources: RPC.ResourceItem[],
+  active: ActivePostgresRun | null,
+): PostgresLifecycle;
+export function resolvePostgresLifecycle(latest: RPC.RunItem | null): PostgresLifecycle;
+export function resolvePostgresLifecycle(
+  resourcesOrLatest: RPC.ResourceItem[] | RPC.RunItem | null,
+  active?: ActivePostgresRun | null,
+): PostgresLifecycle {
+  if (!Array.isArray(resourcesOrLatest)) return resolveLegacyLifecycle(resourcesOrLatest);
+  if (active?.action === 'create') return { kind: 'installing', runId: active.runId };
+  if (active?.action === 'teardown') return { kind: 'tearing-down', runId: active.runId };
+  if (resourcesOrLatest.length === 0) return { kind: 'not-installed' };
+  return { kind: 'installed', operationBusy: active !== null, ...(active ? { runId: active.runId } : {}) };
+}
+
+export async function readActivePostgresRun(caller: RPCCaller): Promise<ActivePostgresRun | null> {
+  const active: ActivePostgresRun[] = [];
+  let offset = 0;
+  let total = 0;
+  let first = true;
+  while (first || offset < total) {
+    let result: unknown;
+    try {
+      result = await caller.getRuns({ statuses: ['0', '1'], sort: '-created_at', limit: PAGE_LIMIT, offset });
+    } catch {
+      throw fail();
+    }
+    const items = page(result, offset, PAGE_LIMIT);
+    const responseTotal = (result as { total: number }).total;
+    if (first) { total = responseTotal; first = false; }
+    else if (responseTotal !== total) throw fail();
+    for (const item of items) {
+      if (item.status !== 0 && item.status !== 1) throw fail();
+      if (validAction(item.action)) active.push({ action: item.action, runId: item.id });
+    }
+    if (items.length === 0 && total === 0) break;
+    offset += items.length;
+  }
+  if (active.length > 1) throw new OperationBusyError();
+  return active[0] ?? null;
 }
 
 export async function readLatestRun(caller: RPCCaller): Promise<RPC.RunItem | null> {

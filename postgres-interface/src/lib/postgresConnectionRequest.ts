@@ -171,20 +171,14 @@ export const generateDatabaseName = (
 export const connectionLabels = (
   access: AccessRequest,
   callerLabels: Record<string, string>,
-  origin: DatabaseOrigin | null =
-    access.scope === 'database'
-      ? access.operation === 'create'
-        ? 'managed'
-        : 'existing'
-      : null,
+  origin?: DatabaseOrigin | null,
 ): Record<string, string> => {
   const labels = parseLabels(callerLabels);
   labels['postgres.access'] = access.scope;
   if (access.scope === 'database') {
-    if (origin === null) throw new Error('Database origin is required');
     labels['postgres.database'] = access.database;
-    labels[POSTGRES_DATABASE_ORIGIN_LABEL] = origin;
-  } else if (origin !== null) {
+    if (origin !== undefined && origin !== null) labels[POSTGRES_DATABASE_ORIGIN_LABEL] = origin;
+  } else if (origin !== undefined && origin !== null) {
     throw new Error('Full access cannot have a database origin');
   }
   return labels;

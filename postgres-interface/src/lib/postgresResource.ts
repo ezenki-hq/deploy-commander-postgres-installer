@@ -1,7 +1,10 @@
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import type { AdminCredentials } from './credentials';
 import { parsePlatformConnection, type PlatformConnection } from './postgresContracts';
-import { PostgresRecoveryRequiredError } from './postgresErrors';
+import {
+  PostgresRecoveryRequiredError,
+  PostgresResourceConfigurationError,
+} from './postgresErrors';
 
 export interface PostgresResourceMetadata {
   engine: 'postgres';
@@ -25,6 +28,10 @@ function isRecord(value: unknown): value is RecordValue {
 
 function recovery(): PostgresRecoveryRequiredError {
   return new PostgresRecoveryRequiredError();
+}
+
+function configuration(): PostgresResourceConfigurationError {
+  return new PostgresResourceConfigurationError();
 }
 
 function validResource(value: unknown): value is RPC.ResourceItem {
@@ -117,7 +124,7 @@ function parseInstallation(details: unknown, resource: RPC.ResourceItem): Postgr
     !sameResource(details.resource, resource) ||
     !isRecord(details.config)
   )
-    throw recovery();
+    throw configuration();
   const config = details.config;
   if (
     config.id !== resource.id ||
@@ -131,7 +138,7 @@ function parseInstallation(details: unknown, resource: RPC.ResourceItem): Postgr
     config.metadata.version !== '15' ||
     !isRecord(config.metadata.administrator)
   )
-    throw recovery();
+    throw configuration();
   const administrator = config.metadata.administrator;
   if (
     Object.keys(administrator).length !== 2 ||
@@ -140,13 +147,13 @@ function parseInstallation(details: unknown, resource: RPC.ResourceItem): Postgr
     typeof administrator.password !== 'string' ||
     administrator.password.trim() === ''
   )
-    throw recovery();
-  if (!Object.prototype.hasOwnProperty.call(config, 'platform_connection')) throw recovery();
+    throw configuration();
+  if (!Object.prototype.hasOwnProperty.call(config, 'platform_connection')) throw configuration();
   let platform: PlatformConnection;
   try {
     platform = parsePlatformConnection(config.platform_connection);
   } catch {
-    throw recovery();
+    throw configuration();
   }
   return {
     resource,
@@ -165,12 +172,12 @@ export async function readPostgresInstallation(
     resource.type !== 'postgres' ||
     resource.name !== 'postgres'
   )
-    throw recovery();
+    throw configuration();
   let details: unknown;
   try {
     details = await caller.getResource(resource.id);
   } catch {
-    throw recovery();
+    throw configuration();
   }
   return parseInstallation(details, resource);
 }

@@ -5,6 +5,27 @@ export class PostgresRecoveryRequiredError extends Error {
   }
 }
 
+export class PostgresNotInstalledError extends Error {
+  constructor() {
+    super('PostgreSQL is not installed');
+    this.name = 'PostgresNotInstalledError';
+  }
+}
+
+export class PostgresResourceAmbiguousError extends Error {
+  constructor() {
+    super('Multiple PostgreSQL resources were found');
+    this.name = 'PostgresResourceAmbiguousError';
+  }
+}
+
+export class PostgresResourceConfigurationError extends PostgresRecoveryRequiredError {
+  constructor() {
+    super('PostgreSQL resource configuration is incomplete');
+    this.name = 'PostgresResourceConfigurationError';
+  }
+}
+
 export class OperationBusyError extends Error {
   constructor() {
     super('A PostgreSQL operation is already in progress');
