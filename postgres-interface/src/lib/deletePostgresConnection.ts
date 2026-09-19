@@ -205,12 +205,43 @@ export async function deletePostgresConnection(
   if (!nonBlank(request.currentManagerId) || !nonBlank(request.callingManagerId))
     throw new PostgresRequestError(400, 'A calling manager is required');
   const installation = await resources(deps.caller);
-  const owned = await listOwnedPostgresConnections(
-    deps.caller,
-    request.callingManagerId,
-    installation.resource.id,
-    installation.platform,
-  );
+  let owned: PostgresConnectionTarget[];
+  if (request.metadata.connectionId !== null) {
+    let probe: unknown;
+    try {
+      probe = await deps.caller.getConnection(request.metadata.connectionId, {
+        include_labels: true,
+      });
+    } catch (error) {
+      if (rpcStatus(error) === 404) probe = null;
+      else throw new Error('PostgreSQL connection lookup failed');
+    }
+    if (probe === null) {
+      owned = [];
+    } else if (
+      record(probe) &&
+      record(probe.connection) &&
+      (probe.connection.manager !== request.callingManagerId ||
+        probe.connection.resource !== installation.resource.id ||
+        probe.connection.external !== false)
+    ) {
+      owned = [];
+    } else {
+      owned = await listOwnedPostgresConnections(
+        deps.caller,
+        request.callingManagerId,
+        installation.resource.id,
+        installation.platform,
+      );
+    }
+  } else {
+    owned = await listOwnedPostgresConnections(
+      deps.caller,
+      request.callingManagerId,
+      installation.resource.id,
+      installation.platform,
+    );
+  }
   const candidates =
     request.metadata.connectionId === null
       ? owned

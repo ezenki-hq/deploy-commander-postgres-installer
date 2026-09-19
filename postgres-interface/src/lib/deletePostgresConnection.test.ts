@@ -218,6 +218,23 @@ describe('deletePostgresConnection', () => {
     expect(caller.start).not.toHaveBeenCalled();
   });
 
+  it('returns the same 404 for a supplied connection owned by another manager', async () => {
+    const caller = callerFor();
+    const other = {
+      ...connectionFixture(access),
+      connection: { ...connectionFixture(access).connection, manager: 'other-manager' },
+    };
+    (caller.getConnection as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(other);
+    (caller.getConnections as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      items: [other.connection],
+      limit: 50,
+      offset: 0,
+      total: 1,
+    });
+    await expect(run(caller, 'connection-1')).rejects.toMatchObject({ status: 404 });
+    expect(approval).not.toHaveBeenCalled();
+  });
+
   it('cancels without starting cleanup or deleting the record', async () => {
     const caller = callerFor();
     approval.mockResolvedValueOnce({ allowed: false });
