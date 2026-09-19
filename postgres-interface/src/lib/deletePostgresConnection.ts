@@ -1,8 +1,8 @@
 import type { RPCCaller, RPC, StartRunOptions } from '@ezenki/deploy-commander-installer-interface';
 import { buildCleanupPlan } from './postgresPlans';
-import { makeCleanupNote } from './connectionRuns';
+import { makeCleanupNote, parseCleanupRun, parseConnectionNote, type CleanupRunRecord } from './connectionRuns';
 import { listPostgresResources, readPostgresInstallation, type PostgresInstallation } from './postgresResource';
-import { findCorrelatedRun } from './postgresRuns';
+import { findCorrelatedRun, listRunsByAction, readExactRun } from './postgresRuns';
 import { listOwnedPostgresConnections, readOwnedPostgresConnection, samePostgresConnectionTarget, type PostgresConnectionTarget } from './postgresConnectionContract';
 import type { AccessRequest } from './postgresConnectionRequest';
 import type { ParsedDeleteConnectionRequest } from './postgresDeleteRequest';
@@ -56,18 +56,52 @@ async function startCleanup(deps: DeleteConnectionWorkflowDeps, metadata: unknow
   throw new Error('Unable to start PostgreSQL cleanup');
 }
 
-async function waitAndValidateCleanup(deps: DeleteConnectionWorkflowDeps, runId: string): Promise<void> {
+function accessEqual(left: AccessRequest, right: AccessRequest): boolean {
+  if (left.scope !== right.scope) return false;
+  if (left.scope === 'database' && right.scope === 'database') return left.operation === right.operation && left.database === right.database;
+  return left.scope === 'full' && right.scope === 'full' && left.superuser === right.superuser;
+}
+function cleanupMatchesTarget(recordValue: CleanupRunRecord, target: PostgresConnectionTarget): boolean {
+  return recordValue.version === 'v2' && recordValue.platform !== undefined && recordValue.identity.callerId === target.managerId && recordValue.identity.resourceId === target.resourceId && recordValue.login.username === target.username && recordValue.login.password === target.password && accessEqual(recordValue.access, target.access) && recordValue.platform.type === target.platform.type && recordValue.platform.data.network === target.platform.data.network;
+}
+async function matchingCleanupRuns(caller: RPCCaller, target: PostgresConnectionTarget): Promise<CleanupRunRecord[]> {
+  const matches: CleanupRunRecord[] = [];
+  for (const summary of await listRunsByAction(caller, 'cleanup-connection')) {
+    let note;
+    try { note = parseConnectionNote(summary.note); } catch { throw new PostgresRecoveryRequiredError(); }
+    if (note.kind !== 'cleanup') throw new PostgresRecoveryRequiredError();
+    if (note.callerId !== target.managerId || note.resourceId !== target.resourceId) continue;
+    const parsed = parseCleanupRun(await readExactRun(caller, summary.id));
+    if (parsed.login.username !== target.username) continue;
+    if (!cleanupMatchesTarget(parsed, target)) throw new PostgresRequestError(409, 'PostgreSQL connection changed during deletion');
+    matches.push(parsed);
+  }
+  return matches;
+}
+
+async function waitAndValidateCleanup(deps: DeleteConnectionWorkflowDeps, runId: string, target: PostgresConnectionTarget): Promise<void> {
   let completed: RPC.GetRun;
   try { completed = await deps.waitForRun(deps.caller, deps.events, runId, { signal: deps.signal }); }
-  catch (error) { if (record(error) && error.name === 'AbortError') throw error; throw new Error('PostgreSQL connection cleanup failed'); }
-  if (!record(completed) || !record(completed.run) || completed.run.id !== runId || completed.run.status !== 2) throw new Error('PostgreSQL connection cleanup failed');
+  catch (error) { if (record(error) && error.name === 'AbortError') throw error; completed = await readExactRun(deps.caller, runId); }
+  const cleanup = parseCleanupRun(completed);
+  if (!cleanupMatchesTarget(cleanup, target)) throw new PostgresRecoveryRequiredError();
+  if (cleanup.status === 3) throw new Error('PostgreSQL connection cleanup failed');
+  if (cleanup.status !== 2) throw new PostgresRecoveryRequiredError();
 }
 
 async function reconcileOrRunCleanup(deps: DeleteConnectionWorkflowDeps, installation: PostgresInstallation, target: PostgresConnectionTarget): Promise<void> {
+  const matches = await matchingCleanupRuns(deps.caller, target);
+  if (matches.length > 1) throw new PostgresRecoveryRequiredError();
+  if (matches.length === 1) {
+    const match = matches[0];
+    if (match.status === 3) throw new Error('PostgreSQL connection cleanup failed');
+    if (match.status < 2) await waitAndValidateCleanup(deps, match.runId, target);
+    return;
+  }
   const identity = { operationId: (deps.generateOperationId ?? operationId)(), callerId: target.managerId, resourceId: target.resourceId };
   const metadata = buildCleanupPlan({ administrator: installation.credentials, login: { username: target.username, password: target.password }, access: target.access, resourceId: target.resourceId, platform: target.platform });
   const runId = await startCleanup(deps, metadata, makeCleanupNote(identity));
-  await waitAndValidateCleanup(deps, runId);
+  await waitAndValidateCleanup(deps, runId, target);
 }
 
 export async function deletePostgresConnection(deps: DeleteConnectionWorkflowDeps, request: DeleteConnectionRequest): Promise<DeleteConnectionResult> {

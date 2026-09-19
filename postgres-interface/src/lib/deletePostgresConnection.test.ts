@@ -27,8 +27,8 @@ function connectionFixture(requestedAccess: AccessRequest) {
     : { 'postgres.access': 'full' };
   return { connection: { id: 'connection-1', manager: 'consumer-manager', resource: resource.id, external: false, created_at: 'now', updated_at: 'now', labels }, config: { id: 'connection-1', manager: 'consumer-manager', resource: resource.id, metadata: { host: 'postgres', port: 5432, database, username: login.username, password: login.password, access: requestedAccess, platform_connection: platform } } };
 }
-function cleanupRun(id: string, requestedAccess: AccessRequest = access): RPC.GetRun {
-  return { run: { id, action: 'cleanup-connection', status: 2, note: makeCleanupNote({ operationId: '01234567-89ab-4def-8123-456789abcdef', callerId: 'consumer-manager', resourceId: resource.id }), queued_at: 'now', created_at: 'now', updated_at: 'now' }, config: { id, run: id, action: 'cleanup-connection', manager: 'postgres-manager', runner: 'ezenki/deploy-commander-runner:latest', metadata: buildCleanupPlan({ administrator, login, access: requestedAccess, resourceId: resource.id, platform }) } } as RPC.GetRun;
+function cleanupRun(id: string, status: 0 | 1 | 2 | 3 = 2, requestedAccess: AccessRequest = access): RPC.GetRun {
+  return { run: { id, action: 'cleanup-connection', status, note: makeCleanupNote({ operationId: '01234567-89ab-4def-8123-456789abcdef', callerId: 'consumer-manager', resourceId: resource.id }), queued_at: 'now', created_at: 'now', updated_at: 'now' }, config: { id, run: id, action: 'cleanup-connection', manager: 'postgres-manager', runner: 'ezenki/deploy-commander-runner:latest', metadata: buildCleanupPlan({ administrator, login, access: requestedAccess, resourceId: resource.id, platform }) } } as RPC.GetRun;
 }
 function callerFor(requestedAccess: AccessRequest = access) {
   const target = connectionFixture(requestedAccess);
@@ -44,7 +44,7 @@ function callerFor(requestedAccess: AccessRequest = access) {
 }
 const approval = vi.fn().mockResolvedValue({ allowed: true, connectionId: 'connection-1' });
 function run(caller: RPCCaller, connectionId: string | null = 'connection-1', requestedAccess = access) {
-  return deletePostgresConnection({ caller, events: createRunEventSource(), requestApproval: approval, waitForRun: vi.fn(async (_c, _e, id) => cleanupRun(id, requestedAccess)), generateOperationId: () => '01234567-89ab-4def-8123-456789abcdef', signal: new AbortController().signal }, { currentManagerId: 'postgres-manager', callingManagerId: 'consumer-manager', metadata: { connectionId } });
+  return deletePostgresConnection({ caller, events: createRunEventSource(), requestApproval: approval, waitForRun: vi.fn(async (_c, _e, id) => cleanupRun(id, 2, requestedAccess)), generateOperationId: () => '01234567-89ab-4def-8123-456789abcdef', signal: new AbortController().signal }, { currentManagerId: 'postgres-manager', callingManagerId: 'consumer-manager', metadata: { connectionId } });
 }
 
 describe('deletePostgresConnection', () => {
@@ -104,5 +104,42 @@ describe('deletePostgresConnection', () => {
     approval.mockResolvedValueOnce({ allowed: true, connectionId: 'connection-forged' });
     await expect(run(caller, null)).rejects.toMatchObject({ status: 400 });
     expect(caller.start).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [0, 'waits for queued cleanup'],
+    [1, 'waits for running cleanup'],
+    [2, 'reuses successful cleanup'],
+    [3, 'surfaces failed cleanup'],
+  ] as const)('%s: %s', async (status) => {
+    const caller = callerFor();
+    const existing = cleanupRun('cleanup-existing', status);
+    caller.getRuns.mockResolvedValue({ items: [existing.run], limit: 50, offset: 0, total: 1 });
+    caller.getRun = vi.fn().mockResolvedValue(existing);
+    if (status === 3) {
+      await expect(run(caller)).rejects.toThrow('PostgreSQL connection cleanup failed');
+      expect(caller.deleteConnection).not.toHaveBeenCalled();
+    } else {
+      await expect(run(caller)).resolves.toEqual({ connection: 'connection-1' });
+      expect(caller.start).not.toHaveBeenCalled();
+    }
+  });
+
+  it('requires recovery for duplicate exact cleanup runs', async () => {
+    const caller = callerFor();
+    const first = cleanupRun('cleanup-1', 2);
+    const second = cleanupRun('cleanup-2', 2);
+    caller.getRuns.mockResolvedValue({ items: [first.run, second.run], limit: 50, offset: 0, total: 2 });
+    caller.getRun = vi.fn().mockImplementation(async (id: string) => (id === 'cleanup-1' ? first : second));
+    await expect(run(caller)).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
+  it('reconciles a lost start response by immutable note', async () => {
+    const caller = callerFor();
+    caller.start.mockRejectedValue(new Error('lost response'));
+    caller.getRuns
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [cleanupRun('accepted-run', 1).run], limit: 50, offset: 0, total: 1 });
+    await expect(run(caller)).resolves.toEqual({ connection: 'connection-1' });
   });
 });
