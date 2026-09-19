@@ -1,0 +1,6 @@
+{
+  "name": "postgres",
+  "kind": "postgres",
+  "description": "Manages a postgres database",
+  "buildDirectory": "dist"
+}
