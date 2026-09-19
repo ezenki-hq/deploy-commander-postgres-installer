@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-19
 
-**Status:** Approved in conversation; written specification awaiting review
+**Status:** Approved
 
 ## Summary
 
