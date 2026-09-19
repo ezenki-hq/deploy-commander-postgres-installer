@@ -61,6 +61,7 @@ function caller() {
     getMyResources: vi
       .fn()
       .mockResolvedValue({ items: [resource], limit: 50, offset: 0, total: 1 }),
+    getCallingManager: vi.fn().mockResolvedValue('consumer-manager'),
     getResource: vi.fn().mockResolvedValue({
       resource,
       config: {
@@ -140,16 +141,29 @@ describe('DeleteConnectionRequest', () => {
       'PostgreSQL connection deletion was cancelled',
     ],
     ['PostgreSQL recovery is required', 503, 'PostgreSQL recovery is required'],
-  ] as const)('maps %s to a fixed close response', async (error, status, message) => {
+  ] as const)('shows %s in the approval gate', async (error) => {
     const wire = { close: vi.fn() } as unknown as Wire;
     render(<DeleteConnectionRequest {...base({} as RPCCaller, wire)} initialError={error} />);
-    await waitFor(() =>
-      expect(wire.close).toHaveBeenCalledWith({
-        manager: 'postgres-manager',
-        ok: false,
-        error: { status, message },
-      }),
+    expect(await screen.findByRole('alert')).toHaveTextContent(error);
+    expect(wire.close).not.toHaveBeenCalled();
+  });
+  it('shows the approval gate while ownership preflight is pending and starts no run', () => {
+    const wire = { close: vi.fn() } as unknown as Wire;
+    const pendingConnections = new Promise(() => undefined);
+    const pendingCaller = caller();
+    pendingCaller.getConnections = vi.fn().mockReturnValue(pendingConnections);
+
+    render(
+      <DeleteConnectionRequest
+        {...base(pendingCaller, wire)}
+        metadata={{ connectionId: 'connection-1' }}
+      />,
     );
+
+    expect(screen.getByRole('dialog', { name: 'Delete PostgreSQL connection?' })).toBeVisible();
+    expect(screen.getByRole('dialog')).toHaveTextContent(/checking connection ownership/i);
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeEnabled();
+    expect(pendingCaller.start).not.toHaveBeenCalled();
   });
   it('closes with only the deleted id', async () => {
     const wire = { close: vi.fn() } as unknown as Wire;
@@ -181,12 +195,6 @@ describe('DeleteConnectionRequest', () => {
         initialError="logical-password appeared"
       />,
     );
-    await waitFor(() =>
-      expect(wire.close).toHaveBeenCalledWith({
-        manager: 'postgres-manager',
-        ok: false,
-        error: { status: 500, message: 'Unable to delete the PostgreSQL connection' },
-      }),
-    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to delete the PostgreSQL connection');
   });
 });
