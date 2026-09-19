@@ -21,7 +21,7 @@ export class PostgresResourceAmbiguousError extends Error {
 
 export class PostgresResourceConfigurationError extends PostgresRecoveryRequiredError {
   constructor() {
-    super('PostgreSQL resource configuration is incomplete');
+    super();
     this.name = 'PostgresResourceConfigurationError';
   }
 }

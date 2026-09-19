@@ -6,7 +6,7 @@ export type RunStatus = 0 | 1 | 2 | 3;
 export type PostgresLifecycle =
   | { kind: 'not-installed' }
   | { kind: 'installing'; runId: string }
-  | { kind: 'installed'; runId: string; operationBusy: boolean }
+  | { kind: 'installed'; runId?: string; operationBusy: boolean }
   | { kind: 'installation-failed'; runId: string }
   | { kind: 'tearing-down'; runId: string }
   | { kind: 'teardown-failed'; runId: string };
@@ -116,7 +116,7 @@ export async function readActivePostgresRun(caller: RPCCaller): Promise<ActivePo
     else if (responseTotal !== total) throw fail();
     for (const item of items) {
       if (item.status !== 0 && item.status !== 1) throw fail();
-      if (validAction(item.action)) active.push({ action: item.action, runId: item.id });
+      if (validAction(item.action)) active.push({ action: item.action as ActivePostgresRun['action'], runId: item.id });
     }
     if (items.length === 0 && total === 0) break;
     offset += items.length;

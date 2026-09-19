@@ -487,8 +487,7 @@ export function databaseConnectionState(
 export function databaseSuggestions(targets: PostgresConnectionTarget[]): string[] {
   return [...new Set(
     targets
-      .filter((target) => target.access.scope === 'database')
-      .map((target) => target.access.database),
+      .flatMap((target) => (target.access.scope === 'database' ? [target.access.database] : [])),
   )].sort();
 }
 

@@ -172,7 +172,7 @@ describe('connection request helpers', () => {
       labels: { 'postgres.access': 'database', 'postgres.database': 'other' },
     },
   ])('rejects invalid origin labels %#', ({ access, labels }) => {
-    expect(() => resolveDatabaseOrigin(access, labels)).toThrow(
+    expect(() => resolveDatabaseOrigin(access, labels as Record<string, string>)).toThrow(
       'Invalid PostgreSQL connection labels',
     );
   });
