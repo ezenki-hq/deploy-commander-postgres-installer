@@ -104,6 +104,10 @@ function accessEqual(left: AccessRequest, right: AccessRequest): boolean {
   return left.scope === 'full' && right.scope === 'full' && left.superuser === right.superuser;
 }
 
+function samePlatform(left: PlatformConnection, right: PlatformConnection): boolean {
+  return left.type === right.type && left.data.network === right.data.network;
+}
+
 function accessIdentityEqual(left: AccessRequest, right: AccessRequest): boolean {
   if (left.scope !== right.scope) return false;
   if (left.scope === 'database' && right.scope === 'database') {
@@ -210,7 +214,7 @@ function normalizeConnection(
   value: unknown,
   expected: ExpectedConnectionIdentity,
   platform: PlatformConnection,
-  options: { requireAccess?: boolean } = {},
+  options: { requireAccess?: boolean; requirePlatformMatch?: boolean } = {},
 ): RPC.CreateConnection {
   const authoritativePlatform = parseAuthoritativePlatform(platform);
   const identity = normalizeExpected(expected);
@@ -269,12 +273,16 @@ function normalizeConnection(
     if (metadata.database !== expectedDatabase) throw invalidConnection();
   }
 
+  let storedPlatform: PlatformConnection | undefined;
   if (Object.prototype.hasOwnProperty.call(metadata, 'platform_connection')) {
     try {
-      parsePlatformConnection(metadata.platform_connection);
+      storedPlatform = parsePlatformConnection(metadata.platform_connection);
     } catch {
       throw invalidConnection();
     }
+  }
+  if (options.requirePlatformMatch && (!storedPlatform || !samePlatform(storedPlatform, authoritativePlatform))) {
+    throw invalidConnection();
   }
 
   if (identity.labels !== undefined) {
@@ -343,7 +351,7 @@ async function readConnection(
   summary: RPC.ConnectionItem,
   expected: ExpectedConnectionIdentity,
   platform: PlatformConnection,
-  options: { requireAccess?: boolean } = {},
+  options: { requireAccess?: boolean; requirePlatformMatch?: boolean } = {},
 ): Promise<RPC.CreateConnection> {
   let full: unknown;
   try {
@@ -361,6 +369,103 @@ async function readConnection(
     throw invalidConnection();
   }
   return normalized;
+}
+
+export interface PostgresConnectionTarget {
+  id: string;
+  managerId: string;
+  resourceId: string;
+  external: false;
+  access: AccessRequest;
+  username: string;
+  password: string;
+  labels: Record<string, string>;
+  platform: PlatformConnection;
+}
+
+function targetOf(value: RPC.CreateConnection): PostgresConnectionTarget {
+  const metadata = value.config.metadata as unknown as UnknownRecord;
+  if (
+    !validAccess(metadata.access) ||
+    typeof metadata.username !== 'string' ||
+    typeof metadata.password !== 'string'
+  ) {
+    throw invalidConnection();
+  }
+  return {
+    id: value.connection.id,
+    managerId: value.connection.manager,
+    resourceId: value.connection.resource,
+    external: false,
+    access: structuredClone(metadata.access),
+    username: metadata.username,
+    password: metadata.password,
+    labels: parseLabels(value.connection.labels),
+    platform: parseAuthoritativePlatform(metadata.platform_connection),
+  };
+}
+
+export async function listOwnedPostgresConnections(
+  caller: RPCCaller,
+  managerId: string,
+  resourceId: string,
+  platform: PlatformConnection,
+): Promise<PostgresConnectionTarget[]> {
+  const expected = normalizeExpected({ managerId, resourceId });
+  const summaries = await listConnectionSummaries(caller, expected);
+  return Promise.all(
+    summaries.map(async (summary) =>
+      targetOf(
+        await readConnection(caller, summary, expected, platform, {
+          requireAccess: true,
+          requirePlatformMatch: true,
+        }),
+      ),
+    ),
+  );
+}
+
+function rpcStatus(value: unknown): number | null {
+  return isRecord(value) && typeof value.status === 'number' ? value.status : null;
+}
+
+export async function readOwnedPostgresConnection(
+  caller: RPCCaller,
+  connectionId: string,
+  managerId: string,
+  resourceId: string,
+  platform: PlatformConnection,
+): Promise<PostgresConnectionTarget | null> {
+  let value: unknown;
+  try {
+    value = await caller.getConnection(connectionId, { include_labels: true });
+  } catch (error) {
+    if (rpcStatus(error) === 404) return null;
+    throw new Error('PostgreSQL connection lookup failed');
+  }
+  return targetOf(
+    normalizeConnection(value, { managerId, resourceId, connectionId }, platform, {
+      requireAccess: true,
+      requirePlatformMatch: true,
+    }),
+  );
+}
+
+export function samePostgresConnectionTarget(
+  left: PostgresConnectionTarget,
+  right: PostgresConnectionTarget,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.managerId === right.managerId &&
+    left.resourceId === right.resourceId &&
+    left.external === right.external &&
+    left.username === right.username &&
+    left.password === right.password &&
+    accessEqual(left.access, right.access) &&
+    sameLabels(left.labels, right.labels) &&
+    samePlatform(left.platform, right.platform)
+  );
 }
 
 /** Reconcile a terminal runner outcome against the exact credentials it was meant to publish. */

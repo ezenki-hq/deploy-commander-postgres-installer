@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RPCCaller, RPC } from '@ezenki/deploy-commander-installer-interface';
 import type { PlatformConnection } from './postgresContracts';
-import { findExistingConnection, normalizePostgresConnection } from './postgresConnectionContract';
+import {
+  findExistingConnection,
+  listOwnedPostgresConnections,
+  normalizePostgresConnection,
+  readOwnedPostgresConnection,
+  samePostgresConnectionTarget,
+} from './postgresConnectionContract';
 import { PostgresRecoveryRequiredError } from './postgresErrors';
 import type { AccessRequest } from './postgresConnectionRequest';
 
@@ -38,6 +44,19 @@ function full(metadata: Record<string, unknown>, id = summary.id) {
 }
 
 const expected = { managerId: 'manager-2', resourceId: 'resource-1' };
+
+const deletionAccess = { scope: 'database', operation: 'create', database: 'orders' } as const;
+const deletionLabels = {
+  team: 'payments',
+  'postgres.access': 'database',
+  'postgres.database': 'orders',
+};
+const deletionMetadata = () => ({
+  ...logicalMetadata,
+  database: 'orders',
+  access: deletionAccess,
+  platform_connection: platform,
+});
 
 describe('normalizePostgresConnection', () => {
   it('enriches otherwise-valid legacy metadata without mutating the RPC result', () => {
@@ -228,6 +247,91 @@ describe('findExistingConnection', () => {
     await expect(
       findExistingConnection(caller, 'manager-2', 'resource-1', platform),
     ).rejects.toThrow('PostgreSQL connection lookup failed');
+  });
+});
+
+describe('owned deletion connection snapshots', () => {
+  it('lists every fully validated connection owned by the requested manager', async () => {
+    const first = { ...summary, labels: deletionLabels };
+    const second = { ...summary, id: 'connection-2', labels: deletionLabels };
+    const caller = {
+      getConnections: vi
+        .fn()
+        .mockResolvedValueOnce({ items: [first], limit: 1, offset: 0, total: 2 })
+        .mockResolvedValueOnce({ items: [second], limit: 1, offset: 1, total: 2 }),
+      getConnection: vi.fn(async (id: string) => ({
+        ...full(deletionMetadata(), id),
+        connection: { ...full(deletionMetadata(), id).connection, labels: deletionLabels },
+      })),
+    } as unknown as RPCCaller;
+
+    await expect(
+      listOwnedPostgresConnections(caller, 'manager-2', 'resource-1', platform),
+    ).resolves.toMatchObject([
+      { id: 'connection-1', access: deletionAccess },
+      { id: 'connection-2', access: deletionAccess },
+    ]);
+    expect(caller.getConnections).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ manager: 'manager-2', resource: 'resource-1', offset: 0 }),
+    );
+  });
+
+  it.each([
+    ['other manager', { ...summary, manager: 'other-manager', labels: deletionLabels }],
+    ['other resource', { ...summary, resource: 'other-resource', labels: deletionLabels }],
+    ['external', { ...summary, external: true, labels: deletionLabels }],
+  ])('rejects %s summaries instead of exposing them', async (_name, item) => {
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({ items: [item], limit: 50, offset: 0, total: 1 }),
+    } as unknown as RPCCaller;
+    await expect(
+      listOwnedPostgresConnections(caller, 'manager-2', 'resource-1', platform),
+    ).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
+  it('requires stored platform metadata to match the authoritative platform for deletion', async () => {
+    const caller = {
+      getConnections: vi.fn().mockResolvedValue({
+        items: [{ ...summary, labels: deletionLabels }],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      }),
+      getConnection: vi.fn().mockResolvedValue({
+        ...full({
+          ...deletionMetadata(),
+          platform_connection: { type: 'Platform', data: { network: 'stale-network' } },
+        }),
+        connection: { ...summary, labels: deletionLabels },
+      }),
+    } as unknown as RPCCaller;
+    await expect(
+      listOwnedPostgresConnections(caller, 'manager-2', 'resource-1', platform),
+    ).rejects.toThrow(PostgresRecoveryRequiredError);
+  });
+
+  it('returns null only for an explicit not-found re-read', async () => {
+    const caller = {
+      getConnection: vi.fn().mockRejectedValue({ status: 404, message: 'secret backend detail' }),
+    } as unknown as RPCCaller;
+    await expect(
+      readOwnedPostgresConnection(caller, 'connection-1', 'manager-2', 'resource-1', platform),
+    ).resolves.toBeNull();
+  });
+
+  it('compares every destructive snapshot field but ignores timestamps', async () => {
+    const caller = { getConnection: vi.fn().mockResolvedValue(full(deletionMetadata())) } as unknown as RPCCaller;
+    const target = await readOwnedPostgresConnection(
+      caller,
+      'connection-1',
+      'manager-2',
+      'resource-1',
+      platform,
+    );
+    expect(target).not.toBeNull();
+    expect(samePostgresConnectionTarget(target!, { ...target!, password: 'changed' })).toBe(false);
+    expect(samePostgresConnectionTarget(target!, structuredClone(target!))).toBe(true);
   });
 });
 
