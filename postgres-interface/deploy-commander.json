@@ -1,0 +1,6 @@
+{
+  "name": "postgres",
+  "kind": "postgres",
+  "description": "Installs PostgreSQL and manages approval-gated database connections",
+  "buildDirectory": "dist"
+}

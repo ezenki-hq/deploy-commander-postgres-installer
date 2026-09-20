@@ -1,0 +1,3 @@
+{
+  "compilerOptions": { "target": "ES2020", "module": "ESNext", "moduleResolution": "Bundler", "jsx": "react-jsx", "strict": true, "composite": true, "tsBuildInfoFile": "./node_modules/.cache/tsconfig.app.tsbuildinfo", "noEmit": true, "skipLibCheck": true }
+}
