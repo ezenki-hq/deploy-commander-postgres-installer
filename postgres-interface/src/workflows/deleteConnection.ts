@@ -6,7 +6,7 @@ import type { AccessRequest, ParsedDeleteRequest } from "../domain/requests";
 import { listResourceConnections, type PostgresConnection } from "../platform/connections";
 import { buildDeletePlan, RUNNER_IMAGE } from "../platform/plans";
 import { loadInstallationProjection, readInstallation, type PostgresInstallation } from "../platform/resources";
-import type { RunTracker } from "../platform/runTracker";
+import type { RunProgress, RunTracker } from "../platform/runTracker";
 
 export type DeleteChoice = {
   id: string;
@@ -37,6 +37,7 @@ export type DeleteConnectionDeps = {
   runTracker: RunTracker;
   databaseOwnerRole?: typeof defaultDatabaseOwnerRole;
   signal?: AbortSignal;
+  onProgress?: (progress: RunProgress) => void;
 };
 
 function assertManagerId(value: unknown, label: string): asserts value is string {
@@ -117,7 +118,7 @@ export async function deletePostgresConnection(
       note: "PostgreSQL connection cleanup",
       target: { kind: "resource", id: refreshed.installation.resource.id },
       metadata: plan,
-    }, () => undefined, signalFor(deps));
+    }, deps.onProgress ?? (() => undefined), signalFor(deps));
   } catch {
     throw new PostgresRequestError(500, "PostgreSQL connection deletion failed");
   }

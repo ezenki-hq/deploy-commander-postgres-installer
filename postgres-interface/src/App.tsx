@@ -1,3 +1,1 @@
-export default function App() {
-  return null;
-}
+export { default } from "./app/App";

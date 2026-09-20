@@ -6,7 +6,7 @@ import type { AccessRequest, ParsedCreateRequest } from "../domain/requests";
 import { findCompatibleConnection, listResourceConnectionSummaries, listResourceConnections, type PostgresConnection } from "../platform/connections";
 import { buildProvisionPlan, RUNNER_IMAGE } from "../platform/plans";
 import { loadInstallationProjection, readInstallation, type PostgresInstallation } from "../platform/resources";
-import { RunFailedError, type RunTracker } from "../platform/runTracker";
+import { RunFailedError, type RunProgress, type RunTracker } from "../platform/runTracker";
 
 export type CreateApprovalContext = {
   callingManagerId: string;
@@ -32,6 +32,7 @@ export type CreateConnectionDeps = {
   generateLoginCredentials?: typeof defaultGenerateLoginCredentials;
   databaseOwnerRole?: typeof defaultDatabaseOwnerRole;
   signal?: AbortSignal;
+  onProgress?: (progress: RunProgress) => void;
 };
 
 function assertManagerId(value: unknown, label: string): asserts value is string {
@@ -147,7 +148,7 @@ export async function createPostgresConnection(
       note: "PostgreSQL connection provisioning",
       target: { kind: "resource", id: refreshed.installation.resource.id },
       metadata: plan,
-    }, () => undefined, signalFor(deps));
+    }, deps.onProgress ?? (() => undefined), signalFor(deps));
   } catch (error) {
     if (error instanceof RunFailedError) throw runFailure(error);
     throw new PostgresRequestError(500, "PostgreSQL connection creation failed");
