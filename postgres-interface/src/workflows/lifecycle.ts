@@ -24,7 +24,7 @@ async function reload(deps: LifecycleDeps): Promise<InstallationProjection> {
   return (deps.reloadProjection ?? projectionLoader(deps))();
 }
 
-export async function installPostgres(deps: LifecycleDeps): Promise<void> {
+export async function installPostgres(deps: LifecycleDeps): Promise<InstallationProjection> {
   const projection = await projectionLoader(deps)();
   if (projection.kind === 'installed' || projection.kind === 'conflict') {
     throw new PostgresRequestError(
@@ -42,10 +42,10 @@ export async function installPostgres(deps: LifecycleDeps): Promise<void> {
     note: 'PostgreSQL installation',
   };
   await deps.runTracker.startAndWait(options, deps.onProgress, deps.signal);
-  await reload(deps);
+  return reload(deps);
 }
 
-export async function teardownPostgres(deps: LifecycleDeps): Promise<void> {
+export async function teardownPostgres(deps: LifecycleDeps): Promise<InstallationProjection> {
   const projection = await projectionLoader(deps)();
   if (projection.kind === 'not-installed')
     throw new PostgresRequestError(404, 'PostgreSQL is not installed');
@@ -54,7 +54,7 @@ export async function teardownPostgres(deps: LifecycleDeps): Promise<void> {
   const confirmed = await deps.requestConfirmation(
     'Teardown will remove PostgreSQL and all databases. Continue?',
   );
-  if (!confirmed) return;
+  if (!confirmed) return projection;
   await deps.runTracker.startAndWait(
     {
       action: 'teardown',
@@ -66,5 +66,5 @@ export async function teardownPostgres(deps: LifecycleDeps): Promise<void> {
     deps.onProgress,
     deps.signal,
   );
-  await reload(deps);
+  return reload(deps);
 }

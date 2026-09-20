@@ -50,13 +50,21 @@ function lifecycleDeps(overrides: Partial<LifecycleDeps> = {}) {
 describe('installPostgres', () => {
   it('starts installation directly when the resource is absent', async () => {
     const { deps, requestConfirmation, onProgress } = lifecycleDeps();
-    await installPostgres(deps);
+    await expect(installPostgres(deps)).resolves.toEqual({ kind: 'not-installed' });
     expect(requestConfirmation).not.toHaveBeenCalled();
     expect(deps.runTracker.startAndWait).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'create', metadata: buildInstallPlan(administrator) }),
       onProgress,
       deps.signal,
     );
+  });
+
+  it('returns the refreshed projection after install completes', async () => {
+    const refreshed: InstallationProjection = { kind: 'installed', resource };
+    const { deps } = lifecycleDeps({
+      reloadProjection: vi.fn().mockResolvedValue(refreshed),
+    });
+    await expect(installPostgres(deps)).resolves.toEqual(refreshed);
   });
 
   it('does not use active or completed runs to decide installation', async () => {
@@ -79,7 +87,8 @@ describe('teardownPostgres', () => {
       })),
       requestConfirmation: vi.fn().mockResolvedValue(false),
     });
-    await teardownPostgres(deps);
+    const installed: InstallationProjection = { kind: 'installed', resource };
+    await expect(teardownPostgres(deps)).resolves.toEqual(installed);
     expect(requestConfirmation).toHaveBeenCalledWith(expect.stringMatching(/all databases/i));
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
