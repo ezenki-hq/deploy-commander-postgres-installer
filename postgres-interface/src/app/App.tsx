@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CreateConnectionDialog } from '../components/CreateConnectionDialog';
 import { Dashboard } from '../components/Dashboard';
 import { DeleteConnectionDialog } from '../components/DeleteConnectionDialog';
+import { FailurePanel } from '../components/FailurePanel';
 import { ManagerShell } from '../components/ManagerShell';
 import { ProgressPanel } from '../components/ProgressPanel';
 import { TeardownDialog } from '../components/TeardownDialog';
@@ -16,14 +17,12 @@ import type { InstallationProjection } from '../platform/resources';
 import { createRunTracker, type RunProgress } from '../platform/runTracker';
 import {
   createPostgresConnection,
-  type CreateApprovalContext,
-  type CreateApprovalDecision,
   type CreateConnectionDeps,
+  type CreateApprovalContext,
 } from '../workflows/createConnection';
 import {
   deletePostgresConnection,
   type DeleteApprovalContext,
-  type DeleteApprovalDecision,
   type DeleteConnectionDeps,
 } from '../workflows/deleteConnection';
 import { installPostgres, teardownPostgres, type LifecycleDeps } from '../workflows/lifecycle';
@@ -42,6 +41,13 @@ type Props = {
   loadDashboard?: typeof loadDashboardProjection;
 };
 type Boot = { managerId: string; callingManagerId: string | null; metadata: unknown };
+
+export type ChildViewState =
+  | { kind: 'preparing' }
+  | { kind: 'create-approval'; context: CreateApprovalContext }
+  | { kind: 'delete-approval'; context: DeleteApprovalContext }
+  | { kind: 'progress'; progress: RunProgress }
+  | { kind: 'failure'; status: number; message: string };
 
 function statusOf(error: unknown): number {
   return error instanceof PostgresRequestError ? error.status : 500;
@@ -80,6 +86,15 @@ export default function App({
   const client = useMemo(() => providedClient ?? createInterfaceClient(), [providedClient]);
   const tracker = useMemo(() => createRunTracker(client.caller, client.events), [client]);
   const decisions = useDecisionController();
+  const {
+    pending: pendingDecision,
+    requestCreate,
+    requestDelete,
+    requestTeardown,
+    decideCreate,
+    decideDelete,
+    decideTeardown,
+  } = decisions;
   const defaultServices = useMemo<AppServices>(
     () => ({
       createConnection: createPostgresConnection,
@@ -99,13 +114,9 @@ export default function App({
   const [rootBusy, setRootBusy] = useState(false);
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const lifecycleAbort = useRef<AbortController | null>(null);
-
-  const [approval, setApproval] = useState<CreateApprovalContext | DeleteApprovalContext | null>(
-    null,
-  );
-  const approvalResolve = useRef<
-    ((decision: CreateApprovalDecision | DeleteApprovalDecision) => void) | null
-  >(null);
+  const [childState, setChildState] = useState<ChildViewState | null>(null);
+  const childAbort = useRef<AbortController | null>(null);
+  const childClosed = useRef(false);
   const ranChild = useRef(false);
 
   useEffect(() => {
@@ -154,6 +165,8 @@ export default function App({
 
   const closeFailure = useCallback(
     (error: unknown) => {
+      if (childClosed.current) return;
+      childClosed.current = true;
       client.wire.close({
         manager: boot?.managerId ?? 'postgres',
         ok: false,
@@ -168,29 +181,14 @@ export default function App({
     },
     [boot?.managerId, client.wire],
   );
-  const resolveApproval = useCallback(
-    (decision: CreateApprovalDecision | DeleteApprovalDecision) => {
-      setApproval(null);
-      const resolve = approvalResolve.current;
-      approvalResolve.current = null;
-      resolve?.(decision);
-    },
-    [],
-  );
-  const requestApproval = useCallback(
-    <T extends CreateApprovalContext | DeleteApprovalContext>(context: T) => {
-      setApproval(context);
-      return new Promise<CreateApprovalDecision | DeleteApprovalDecision>((resolve) => {
-        approvalResolve.current = resolve;
-      });
-    },
-    [],
-  );
-  const onProgress = useCallback((next: RunProgress) => setProgress(next), []);
+  const onRootProgress = useCallback((next: RunProgress) => setProgress(next), []);
 
   useEffect(() => {
     if (!boot || boot.callingManagerId === null || ranChild.current) return;
     ranChild.current = true;
+    const controller = new AbortController();
+    childAbort.current = controller;
+    setChildState({ kind: 'preparing' });
     const callingManagerId = boot.callingManagerId;
     const run = async () => {
       try {
@@ -200,10 +198,14 @@ export default function App({
           const deps: CreateConnectionDeps = {
             caller: client.caller,
             runTracker: tracker,
-            requestApproval: (context) =>
-              requestApproval(context) as Promise<CreateApprovalDecision>,
-            onProgress,
-            signal: new AbortController().signal,
+            requestApproval: (context) => {
+              setChildState({ kind: 'create-approval', context });
+              return requestCreate(context);
+            },
+            onProgress: (next) => {
+              setChildState({ kind: 'progress', progress: next });
+            },
+            signal: controller.signal,
           };
           const result = await appServices.createConnection(deps, {
             currentManagerId: boot.managerId,
@@ -216,10 +218,14 @@ export default function App({
           const deps: DeleteConnectionDeps = {
             caller: client.caller,
             runTracker: tracker,
-            requestApproval: (context) =>
-              requestApproval(context) as Promise<DeleteApprovalDecision>,
-            onProgress,
-            signal: new AbortController().signal,
+            requestApproval: (context) => {
+              setChildState({ kind: 'delete-approval', context });
+              return requestDelete(context);
+            },
+            onProgress: (next) => {
+              setChildState({ kind: 'progress', progress: next });
+            },
+            signal: controller.signal,
           };
           const result = await appServices.deleteConnection(deps, {
             currentManagerId: boot.managerId,
@@ -231,18 +237,30 @@ export default function App({
           throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
         }
       } catch (error) {
+        setChildState({
+          kind: 'failure',
+          status: statusOf(error),
+          message:
+            error instanceof PostgresRequestError
+              ? error.message
+              : 'PostgreSQL manager operation failed',
+        });
         closeFailure(error);
       }
     };
     void run();
+    return () => {
+      controller.abort();
+      if (childAbort.current === controller) childAbort.current = null;
+    };
   }, [
     appServices,
     boot,
     client.caller,
     client.wire,
     closeFailure,
-    onProgress,
-    requestApproval,
+    requestCreate,
+    requestDelete,
     tracker,
   ]);
 
@@ -257,8 +275,8 @@ export default function App({
       const deps: LifecycleDeps = {
         caller: client.caller,
         runTracker: tracker,
-        requestConfirmation: decisions.requestTeardown,
-        onProgress,
+        requestConfirmation: requestTeardown,
+        onProgress: onRootProgress,
         signal: controller.signal,
       };
       void operation(deps)
@@ -270,7 +288,7 @@ export default function App({
           setProgress(null);
         });
     },
-    [client.caller, decisions.requestTeardown, onProgress, readDashboard, rootBusy, tracker],
+    [client.caller, onRootProgress, readDashboard, requestTeardown, rootBusy, tracker],
   );
   const runInstall = useCallback(() => {
     runLifecycle(appServices.install);
@@ -319,21 +337,33 @@ export default function App({
             message={rootError ?? 'Unable to load PostgreSQL manager state'}
           />
         )}
-        {decisions.pending?.kind === 'teardown' && (
-          <TeardownDialog busy={false} onDecision={decisions.decideTeardown} />
+        {pendingDecision?.kind === 'teardown' && (
+          <TeardownDialog busy={false} onDecision={decideTeardown} />
         )}
       </ManagerShell>
     );
   }
   return (
     <ManagerShell badge={{ label: 'Action requested', tone: 'progress' }}>
-      {approval &&
-        ('choices' in approval ? (
-          <DeleteConnectionDialog context={approval} onDecision={resolveApproval} />
-        ) : (
-          <CreateConnectionDialog context={approval} onDecision={resolveApproval} />
-        ))}
-      {progress && <ProgressPanel progress={progress} />}
+      {!childState || childState.kind === 'preparing' ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900 shadow-sm">
+          Preparing PostgreSQL operation…
+        </div>
+      ) : childState.kind === 'create-approval' ? (
+        <CreateConnectionDialog
+          context={childState.context}
+          onDecision={decideCreate}
+        />
+      ) : childState.kind === 'delete-approval' ? (
+        <DeleteConnectionDialog
+          context={childState.context}
+          onDecision={decideDelete}
+        />
+      ) : childState.kind === 'progress' ? (
+        <ProgressPanel progress={childState.progress} />
+      ) : (
+        <FailurePanel status={childState.status} message={childState.message} />
+      )}
     </ManagerShell>
   );
 }
