@@ -1,70 +1,88 @@
-import { useEffect, useState } from 'react';
-import type { RPCCaller } from '@ezenki/deploy-commander-installer-interface';
-import { listResourceConnectionSummaries } from '../platform/connections';
-import { loadInstallationProjection, type InstallationProjection } from '../platform/resources';
+import type { DashboardProjection } from '../platform/dashboardProjection';
+import { ActionButton } from './ActionButton';
 
-export function Dashboard({
-  caller,
-  onInstall,
-  onTeardown,
-  busy = false,
-}: {
-  caller: RPCCaller;
+export interface DashboardProps {
+  projection: DashboardProjection;
   onInstall: () => void;
   onTeardown: () => void;
-  busy?: boolean;
-}) {
-  const [projection, setProjection] = useState<InstallationProjection | null>(null);
-  const [connectionCount, setConnectionCount] = useState(0);
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      const next = await loadInstallationProjection(caller);
-      if (!live) return;
-      setProjection(next);
-      if (next.kind === 'installed')
-        setConnectionCount(
-          (await listResourceConnectionSummaries(caller, next.resource.id)).length,
-        );
-    })().catch(() => live && setProjection({ kind: 'not-installed' }));
-    return () => {
-      live = false;
-    };
-  }, [caller]);
-  if (!projection)
-    return (
-      <main>
-        <h1>PostgreSQL Manager</h1>
-        <p>Loading PostgreSQL state…</p>
-      </main>
-    );
-  if (projection.kind === 'conflict')
-    return (
-      <main>
-        <h1>PostgreSQL Manager</h1>
-        <p role="alert">Multiple PostgreSQL resources need attention.</p>
-      </main>
-    );
-  if (projection.kind === 'not-installed')
-    return (
-      <main>
-        <h1>PostgreSQL Manager</h1>
-        <p>PostgreSQL is not installed.</p>
-        <button type="button" onClick={onInstall} disabled={busy}>
-          Install PostgreSQL
-        </button>
-      </main>
-    );
+  busy: boolean;
+  error?: string | null;
+}
+
+function pluralizeConnections(count: number): string {
+  return `${count} managed connection${count === 1 ? '' : 's'}`;
+}
+
+export function Dashboard({
+  projection,
+  onInstall,
+  onTeardown,
+  busy,
+  error,
+}: DashboardProps) {
   return (
-    <main>
-      <h1>PostgreSQL Manager</h1>
-      <p>PostgreSQL is installed.</p>
-      <p>
-        {connectionCount} managed connection{connectionCount === 1 ? '' : 's'}.
-      </p>
-      <button type="button" onClick={onTeardown} disabled={busy}>
-        Teardown PostgreSQL
-      </button>
-    </main>
+    <div className="space-y-6">
+      {error && (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800"
+        >
+          {error}
+        </div>
+      )}
+
+      {projection.installation.kind === 'conflict' ? (
+        <section className="rounded-2xl border border-rose-200 bg-white p-6 shadow-sm sm:p-8">
+          <span className="inline-flex rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+            Attention required
+          </span>
+          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">
+            Multiple PostgreSQL resources found
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+            PostgreSQL installation state is ambiguous. Remove the duplicate resource before
+            running another lifecycle action.
+          </p>
+        </section>
+      ) : projection.installation.kind === 'not-installed' ? (
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+          <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
+            Not installed
+          </span>
+          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">
+            Install PostgreSQL
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+            Install the managed PostgreSQL service. Clicking Install authorizes this lifecycle run;
+            no second confirmation is required.
+          </p>
+          <div className="mt-7">
+            <ActionButton onClick={onInstall} busy={busy}>
+              Install PostgreSQL
+            </ActionButton>
+          </div>
+        </section>
+      ) : (
+        <section className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8">
+          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            Installed
+          </span>
+          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-950">
+            PostgreSQL is ready
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            The managed service is installed and available to approved consumers.
+          </p>
+          <div className="mt-6 rounded-xl bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+            {pluralizeConnections(projection.connectionCount)}
+          </div>
+          <div className="mt-7">
+            <ActionButton tone="danger" onClick={onTeardown} busy={busy}>
+              Teardown PostgreSQL
+            </ActionButton>
+          </div>
+        </section>
+      )}
+    </div>
   );
 }
