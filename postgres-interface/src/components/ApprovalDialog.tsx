@@ -1,4 +1,6 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { ActionButton } from './ActionButton';
+import { ModalDialog } from './ModalDialog';
 
 export function ApprovalDialog({
   title,
@@ -7,6 +9,8 @@ export function ApprovalDialog({
   onApprove,
   onReject,
   approveDisabled = false,
+  busy = false,
+  tone = 'neutral',
 }: {
   title: string;
   children: ReactNode;
@@ -14,64 +18,32 @@ export function ApprovalDialog({
   onApprove: () => void;
   onReject: () => void;
   approveDisabled?: boolean;
+  busy?: boolean;
+  tone?: 'neutral' | 'danger';
 }) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    previousFocus.current = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    const focusable = () =>
-      [
-        ...(dialog?.querySelectorAll<HTMLElement>(
-          "button, input, select, textarea, [tabindex='0']",
-        ) ?? []),
-      ].filter((el) => !el.hasAttribute('disabled'));
-    focusable()[0]?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onReject();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const items = focusable();
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    dialog?.addEventListener('keydown', onKeyDown);
-    return () => {
-      dialog?.removeEventListener('keydown', onKeyDown);
-      previousFocus.current?.focus();
-    };
-  }, [onReject]);
   return (
-    <div className="modal-backdrop">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="approval-title"
-        ref={dialogRef}
-      >
-        <h2 id="approval-title">{title}</h2>
-        <div className="modal-body">{children}</div>
-        <div className="modal-actions">
-          <button type="button" onClick={onReject}>
+    <ModalDialog
+      title={title}
+      onCancel={onReject}
+      busy={busy}
+      tone={tone}
+      actions={
+        <>
+          <ActionButton tone="secondary" onClick={onReject} busy={busy}>
             Reject
-          </button>
-          <button type="button" onClick={onApprove} disabled={approveDisabled}>
+          </ActionButton>
+          <ActionButton
+            tone={tone === 'danger' ? 'danger' : 'primary'}
+            onClick={onApprove}
+            disabled={approveDisabled}
+            busy={busy}
+          >
             {approveLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+          </ActionButton>
+        </>
+      }
+    >
+      {children}
+    </ModalDialog>
   );
 }
