@@ -1,6 +1,6 @@
 import type { RPCCaller } from '@ezenki/deploy-commander-installer-interface';
 import { databaseOwnerRole as defaultDatabaseOwnerRole } from '../domain/credentials';
-import { PostgresRequestError } from '../domain/errors';
+import { PostgresRequestError, rpcStatus } from '../domain/errors';
 import { deletionEffect, type ConnectionAuthority, type DeletionTarget } from '../domain/labels';
 import type { AccessRequest, ParsedDeleteRequest } from '../domain/requests';
 import { listResourceConnections, type PostgresConnection } from '../platform/connections';
@@ -186,7 +186,10 @@ export async function deletePostgresConnection(
       throw new PostgresRequestError(500, 'PostgreSQL connection was not deleted');
   } catch (error) {
     if (error instanceof PostgresRequestError) throw error;
-    // A missing connection is the successful postcondition. The RPC layer reports it as an error.
+    const message = error instanceof Error ? error.message : '';
+    if (rpcStatus(error) !== 404 && !/\b404\b|not found/i.test(message)) {
+      throw new PostgresRequestError(500, 'Unable to verify PostgreSQL connection deletion');
+    }
   }
   return { connection: target.item.id };
 }

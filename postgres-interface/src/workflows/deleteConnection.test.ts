@@ -272,4 +272,16 @@ describe('deletePostgresConnection', () => {
     });
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
+
+  it('does not treat an unclassified post-delete RPC failure as success', async () => {
+    const { deps, caller } = createDeps([target()]);
+    caller.getConnection = vi
+      .fn()
+      .mockResolvedValueOnce(details(target()))
+      .mockResolvedValueOnce(details(target()))
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    await expect(deletePostgresConnection(deps, explicitRequest)).rejects.toMatchObject({
+      status: 500,
+    });
+  });
 });

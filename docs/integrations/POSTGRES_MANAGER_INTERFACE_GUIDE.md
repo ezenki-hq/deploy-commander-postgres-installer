@@ -186,6 +186,9 @@ database is never removed because a name happens to match; only the final labele
 to a manager-created database can remove it. All other deletions remove only the generated
 login and connection.
 
+An `operation: "existing"` request for a database that already has a manager-created labeled
+connection inherits `postgres.database-origin=managed`; otherwise it is labeled `existing`.
+
 ## Resource and connection authority
 
 Installation state is the exact non-external resource named `postgres` and typed `postgres`.
