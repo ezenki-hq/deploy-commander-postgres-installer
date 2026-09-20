@@ -1,19 +1,19 @@
-import type { LoginCredentials } from "../domain/credentials";
-import { connectionLabels, type DatabaseOrigin, type DeletionEffect } from "../domain/labels";
-import type { AccessRequest } from "../domain/requests";
-import type { PostgresConnection } from "./connections";
-import type { PostgresInstallation } from "./resources";
+import type { LoginCredentials } from '../domain/credentials';
+import { connectionLabels, type DatabaseOrigin, type DeletionEffect } from '../domain/labels';
+import type { AccessRequest } from '../domain/requests';
+import type { PostgresConnection } from './connections';
+import type { PostgresInstallation } from './resources';
 
-export const RUNNER_IMAGE = "ezenki/deploy-commander-runner:latest";
-export const POSTGRES_IMAGE = "postgres:15";
+export const RUNNER_IMAGE = 'ezenki/deploy-commander-runner:latest';
+export const POSTGRES_IMAGE = 'postgres:15';
 
 type RunnerService = {
   image: string;
-  role?: "runner";
+  role?: 'runner';
   aliases?: string[];
   environment?: Record<string, string>;
   command?: string[];
-  connections?: Array<{ type: "Platform"; data: { network: string } }>;
+  connections?: Array<{ type: 'Platform'; data: { network: string } }>;
   resources?: Array<Record<string, unknown>>;
   volumes?: Array<{ name: string; mount_path: string }>;
 };
@@ -204,9 +204,9 @@ SQL`;
 
 function adminEnvironment(installation: PostgresInstallation): Record<string, string> {
   return {
-    PGHOST: "postgres",
-    PGPORT: "5432",
-    PGDATABASE: "postgres",
+    PGHOST: 'postgres',
+    PGPORT: '5432',
+    PGDATABASE: 'postgres',
     PGUSER: installation.administrator.username,
     PGPASSWORD: installation.administrator.password,
   };
@@ -219,10 +219,10 @@ function adminService(
 ): RunnerService {
   return {
     image: POSTGRES_IMAGE,
-    role: "runner",
+    role: 'runner',
     connections: [installation.platformConnection],
     environment: { ...adminEnvironment(installation), ...environment },
-    command: ["sh", "-ceu", script],
+    command: ['sh', '-ceu', script],
   };
 }
 
@@ -241,19 +241,20 @@ function loginEnvironment(
 }
 
 function accessScript(access: AccessRequest): string {
-  if (access.scope === "database") return access.operation === "create" ? DATABASE_PROVISION_SCRIPT : EXISTING_DATABASE_SCRIPT;
+  if (access.scope === 'database')
+    return access.operation === 'create' ? DATABASE_PROVISION_SCRIPT : EXISTING_DATABASE_SCRIPT;
   return access.superuser ? SUPERUSER_SCRIPT : CONSTRAINED_FULL_SCRIPT;
 }
 
 function connectionMetadata(
   login: LoginCredentials,
   access: AccessRequest,
-  platformConnection: PostgresInstallation["platformConnection"],
+  platformConnection: PostgresInstallation['platformConnection'],
 ): Record<string, unknown> {
   return {
-    host: "postgres",
+    host: 'postgres',
     port: 5432,
-    database: access.scope === "database" ? access.database : "postgres",
+    database: access.scope === 'database' ? access.database : 'postgres',
     username: login.username,
     password: login.password,
     access,
@@ -261,26 +262,31 @@ function connectionMetadata(
   };
 }
 
-export function buildInstallPlan(administrator: { username: string; password: string }): RunnerMetadata {
+export function buildInstallPlan(administrator: {
+  username: string;
+  password: string;
+}): RunnerMetadata {
   return {
     services: {
       postgres: {
         image: POSTGRES_IMAGE,
-        aliases: ["postgres"],
+        aliases: ['postgres'],
         environment: {
           POSTGRES_USER: administrator.username,
           POSTGRES_PASSWORD: administrator.password,
-          POSTGRES_DB: "postgres",
+          POSTGRES_DB: 'postgres',
         },
-        resources: [{
-          resource_type: "postgres",
-          name: "postgres",
-          metadata: { engine: "postgres", version: "15", administrator },
-        }],
-        volumes: [{ name: "postgres-data", mount_path: "/var/lib/postgresql/data" }],
+        resources: [
+          {
+            resource_type: 'postgres',
+            name: 'postgres',
+            metadata: { engine: 'postgres', version: '15', administrator },
+          },
+        ],
+        volumes: [{ name: 'postgres-data', mount_path: '/var/lib/postgresql/data' }],
       },
     },
-    volumes: ["postgres-data"],
+    volumes: ['postgres-data'],
   };
 }
 
@@ -297,25 +303,32 @@ export function buildProvisionPlan(input: {
   databaseOwner?: string;
   callerLabels: Record<string, string>;
 }): RunnerMetadata {
-  const database = input.access.scope === "database" ? input.access.database : "postgres";
-  if (input.access.scope === "database" && !input.databaseOwner) throw new Error("Database owner is required");
+  const database = input.access.scope === 'database' ? input.access.database : 'postgres';
+  if (input.access.scope === 'database' && !input.databaseOwner)
+    throw new Error('Database owner is required');
   const labels = connectionLabels(input.access, input.callerLabels, input.origin);
   return {
     services: {
-      "postgres-admin": adminService(
+      'postgres-admin': adminService(
         input.installation,
         loginEnvironment(input.installation, input.login, database, input.databaseOwner),
         accessScript(input.access),
       ),
     },
     connections: {
-      create: [{
-        name: "postgres-connection",
-        manager: input.callerId,
-        resource: { id: input.installation.resource.id },
-        metadata: connectionMetadata(input.login, input.access, input.installation.platformConnection),
-        labels,
-      }],
+      create: [
+        {
+          name: 'postgres-connection',
+          manager: input.callerId,
+          resource: { id: input.installation.resource.id },
+          metadata: connectionMetadata(
+            input.login,
+            input.access,
+            input.installation.platformConnection,
+          ),
+          labels,
+        },
+      ],
     },
   };
 }
@@ -326,24 +339,35 @@ export function buildDeletePlan(input: {
   effect: DeletionEffect;
   databaseOwner?: string;
 }): RunnerMetadata {
-  const database = input.target.authority.access === "database" ? input.target.authority.database : "postgres";
-  if (input.effect === "role-and-database" && (!input.databaseOwner || input.target.authority.access !== "database")) {
-    throw new Error("Managed database owner is required");
+  const database =
+    input.target.authority.access === 'database' ? input.target.authority.database : 'postgres';
+  if (
+    input.effect === 'role-and-database' &&
+    (!input.databaseOwner || input.target.authority.access !== 'database')
+  ) {
+    throw new Error('Managed database owner is required');
   }
   return {
     services: {
-      "postgres-admin": adminService(
+      'postgres-admin': adminService(
         input.installation,
-        loginEnvironment(input.installation, { username: input.target.username, password: input.target.password }, database, input.databaseOwner),
-        input.effect === "role-and-database" ? DATABASE_CLEANUP_SCRIPT : ROLE_CLEANUP_SCRIPT,
+        loginEnvironment(
+          input.installation,
+          { username: input.target.username, password: input.target.password },
+          database,
+          input.databaseOwner,
+        ),
+        input.effect === 'role-and-database' ? DATABASE_CLEANUP_SCRIPT : ROLE_CLEANUP_SCRIPT,
       ),
     },
     connections: {
-      remove: [{
-        name: "postgres-connection",
-        id: input.target.item.id,
-        resource: { id: input.target.resourceId },
-      }],
+      remove: [
+        {
+          name: 'postgres-connection',
+          id: input.target.item.id,
+          resource: { id: input.target.resourceId },
+        },
+      ],
     },
   };
 }

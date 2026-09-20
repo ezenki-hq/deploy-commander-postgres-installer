@@ -1,5 +1,5 @@
-import type { Events, RPCCaller } from "@ezenki/deploy-commander-installer-interface";
-import { vi } from "vitest";
+import type { Events, RPCCaller } from '@ezenki/deploy-commander-installer-interface';
+import { vi } from 'vitest';
 
 export function deferred<T>() {
   let resolve!: (value: T) => void;

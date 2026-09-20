@@ -1,5 +1,12 @@
-import { createWire, RPC, type Events, type RPCCaller, type RPCResponse, type Wire } from "@ezenki/deploy-commander-installer-interface";
-import type { RunEventSource } from "./runTracker";
+import {
+  createWire,
+  RPC,
+  type Events,
+  type RPCCaller,
+  type RPCResponse,
+  type Wire,
+} from '@ezenki/deploy-commander-installer-interface';
+import type { RunEventSource } from './runTracker';
 
 export interface InterfaceClient {
   wire: Wire;
@@ -18,7 +25,7 @@ export function createInterfaceClient(): InterfaceClient {
   };
   const handleIncomingCall = async (): Promise<RPCResponse> => ({
     ok: false,
-    error: { message: "PostgreSQL manager does not accept incoming RPC requests" },
+    error: { message: 'PostgreSQL manager does not accept incoming RPC requests' },
   });
   const wire = createWire(handleIncomingCall, (event) => {
     for (const listener of listeners) listener(event);
