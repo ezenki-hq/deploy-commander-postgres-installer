@@ -74,6 +74,18 @@ manager's visual language:
 
 The UI remains usable at 320px width and does not depend on an external icon or component package.
 
+## React scaffold and publishing
+
+Preserve the existing React/TypeScript/Vite project created for the Deploy Commander installer
+interface. The package-provided CLI remains available through `npx deploy-commander`; the project
+keeps separate `build`, `publish:manager`, and combined `deploy` scripts so publishing remains a
+deliberate operation after a successful build.
+
+`deploy-commander.json` stays target-neutral and contains only the stable manager identity,
+description, kind, and `dist` build directory. Commander URL and credentials are supplied later by
+the user through the supported environment or adjacent uncommitted `.env`; they are never added to
+source control. This repair validates the build and CLI locally but does not publish.
+
 ## Component boundaries
 
 ### `ManagerShell`
@@ -128,7 +140,8 @@ the dialog until approval resolves.
 1. Root projection is `not-installed`.
 2. User clicks Install PostgreSQL. That click is the authorization; no dialog opens.
 3. UI renders local starting/queued/running progress from the run tracker.
-4. When the run finishes, the root controller reloads resources and connections.
+4. When the run finishes, the lifecycle workflow reloads the resource projection and returns it;
+   the root controller uses that exact projection while loading its connection summaries.
 5. The projection becomes `installed`; the same mounted interface immediately renders the installed
    card and Teardown action.
 
@@ -139,7 +152,8 @@ the dialog until approval resolves.
    removed.
 3. Cancel closes the dialog, returns `false` to the workflow, and starts no run.
 4. Confirm closes the dialog, returns `true`, and permits one teardown run.
-5. Success refreshes the projection and returns the dashboard to the Install view.
+5. Success returns the refreshed resource projection, and the root controller uses it to return the
+   dashboard to the Install view.
 
 `installPostgres` and `teardownPostgres` return their post-action `InstallationProjection`. A
 cancelled teardown returns the unchanged installed projection. App consumes that return value;
@@ -208,4 +222,6 @@ exists in production source.
 - Child failures never leave a blank manager view.
 - The state model remains resource/connection-only and the public manager interface contract stays
   compatible.
+- The React scaffold, `npx deploy-commander` CLI, publish scripts, and target-neutral
+  `deploy-commander.json` remain ready for the user-supplied Deploy Commander target.
 - Full test, lint, build, format, and forbidden-symbol checks pass from a clean working tree.
