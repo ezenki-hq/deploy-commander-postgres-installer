@@ -7,6 +7,7 @@ export interface DashboardProps {
   onTeardown: () => void;
   busy: boolean;
   error?: string | null;
+  onRetry?: () => void;
 }
 
 function pluralizeConnections(count: number): string {
@@ -19,6 +20,7 @@ export function Dashboard({
   onTeardown,
   busy,
   error,
+  onRetry,
 }: DashboardProps) {
   return (
     <div className="space-y-6">
@@ -27,7 +29,14 @@ export function Dashboard({
           role="alert"
           className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-800"
         >
-          {error}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <span>{error}</span>
+            {onRetry && (
+              <ActionButton tone="secondary" onClick={onRetry}>
+                Retry
+              </ActionButton>
+            )}
+          </div>
         </div>
       )}
 
@@ -40,8 +49,8 @@ export function Dashboard({
             Multiple PostgreSQL resources found
           </h2>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            PostgreSQL installation state is ambiguous. Remove the duplicate resource before
-            running another lifecycle action.
+            PostgreSQL installation state is ambiguous. Remove the duplicate resource before running
+            another lifecycle action.
           </p>
         </section>
       ) : projection.installation.kind === 'not-installed' ? (

@@ -1,13 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import type {
-  CreateApprovalContext,
-  CreateApprovalDecision,
-} from '../workflows/createConnection';
-import type {
-  DeleteApprovalContext,
-  DeleteApprovalDecision,
-} from '../workflows/deleteConnection';
+import type { CreateApprovalContext, CreateApprovalDecision } from '../workflows/createConnection';
+import type { DeleteApprovalContext, DeleteApprovalDecision } from '../workflows/deleteConnection';
 import { useDecisionController } from './useDecisionController';
 
 const createContext: CreateApprovalContext = {

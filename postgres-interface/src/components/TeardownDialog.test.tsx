@@ -16,9 +16,7 @@ describe('TeardownDialog', () => {
   it('requires an explicit destructive confirmation', async () => {
     const decide = vi.fn();
     render(<TeardownDialog busy={false} onDecision={decide} />);
-    await userEvent
-      .setup()
-      .click(screen.getByRole('button', { name: /confirm teardown/i }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /confirm teardown/i }));
     expect(decide).toHaveBeenCalledWith(true);
   });
 });

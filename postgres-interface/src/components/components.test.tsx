@@ -55,9 +55,7 @@ it('allows labels-only requests to choose access and disables empty database app
   );
   expect(screen.getByRole('combobox', { name: /scope/i })).toBeVisible();
   expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
-  await userEvent
-    .setup()
-    .selectOptions(screen.getByRole('combobox', { name: /scope/i }), 'full');
+  await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: /scope/i }), 'full');
   expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
 });
 
@@ -73,9 +71,7 @@ it('warns when full superuser access is selected', async () => {
       onDecision={vi.fn()}
     />,
   );
-  await userEvent
-    .setup()
-    .selectOptions(screen.getByRole('combobox', { name: /scope/i }), 'full');
+  await userEvent.setup().selectOptions(screen.getByRole('combobox', { name: /scope/i }), 'full');
   await userEvent.setup().click(screen.getByRole('checkbox', { name: /superuser/i }));
   expect(screen.getByRole('alert')).toHaveTextContent(/full superuser access/i);
 });

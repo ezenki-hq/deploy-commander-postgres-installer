@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  CreateApprovalContext,
-  CreateApprovalDecision,
-} from '../workflows/createConnection';
-import type {
-  DeleteApprovalContext,
-  DeleteApprovalDecision,
-} from '../workflows/deleteConnection';
+import type { CreateApprovalContext, CreateApprovalDecision } from '../workflows/createConnection';
+import type { DeleteApprovalContext, DeleteApprovalDecision } from '../workflows/deleteConnection';
 
 export type PendingDecision =
   | { kind: 'create'; context: CreateApprovalContext }

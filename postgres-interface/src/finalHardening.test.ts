@@ -38,3 +38,23 @@ it('keeps approval no-start assertions in both connection workflow tests', () =>
     expect(source).toMatch(/startAndWait\)\.not\.toHaveBeenCalled/);
   }
 });
+
+it('contains no browser alert or confirmation APIs', () => {
+  expect(productionSource()).not.toMatch(/window\.(alert|confirm)\s*\(/);
+});
+
+it('keeps Tailwind wired through Vite and the application stylesheet', () => {
+  const packageJson = readFileSync(join(process.cwd(), 'package.json'), 'utf8');
+  const vite = readFileSync(join(process.cwd(), 'vite.config.ts'), 'utf8');
+  const css = readFileSync(join(process.cwd(), 'src/index.css'), 'utf8');
+  expect(packageJson).toContain('@tailwindcss/vite');
+  expect(vite).toContain('tailwindcss()');
+  expect(css).toContain("@import 'tailwindcss'");
+});
+
+it('has App integration coverage for lifecycle transitions and both approvals', () => {
+  const appTest = readFileSync(join(process.cwd(), 'src/app/App.test.tsx'), 'utf8');
+  expect(appTest).toMatch(/transitions from Install to Teardown/i);
+  expect(appTest).toMatch(/create approval before progress/i);
+  expect(appTest).toMatch(/delete.*approval/i);
+});

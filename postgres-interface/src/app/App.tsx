@@ -6,13 +6,11 @@ import { FailurePanel } from '../components/FailurePanel';
 import { ManagerShell } from '../components/ManagerShell';
 import { ProgressPanel } from '../components/ProgressPanel';
 import { TeardownDialog } from '../components/TeardownDialog';
+import { ActionButton } from '../components/ActionButton';
 import { parseCreateRequest, parseDeleteRequest } from '../domain/requests';
 import { PostgresRequestError } from '../domain/errors';
 import { createInterfaceClient, type InterfaceClient } from '../platform/interfaceClient';
-import {
-  loadDashboardProjection,
-  type DashboardProjection,
-} from '../platform/dashboardProjection';
+import { loadDashboardProjection, type DashboardProjection } from '../platform/dashboardProjection';
 import type { InstallationProjection } from '../platform/resources';
 import { createRunTracker, type RunProgress } from '../platform/runTracker';
 import {
@@ -59,7 +57,15 @@ function rootErrorMessage(error: unknown): string {
     : 'Unable to load PostgreSQL manager state';
 }
 
-function RootFailure({ status, message }: { status: number; message: string }) {
+function RootFailure({
+  status,
+  message,
+  onRetry,
+}: {
+  status: number;
+  message: string;
+  onRetry?: () => void;
+}) {
   return (
     <div
       role="alert"
@@ -67,14 +73,21 @@ function RootFailure({ status, message }: { status: number; message: string }) {
     >
       <p className="font-semibold">PostgreSQL manager request failed ({status})</p>
       <p className="mt-1">{message}</p>
+      {onRetry && (
+        <ActionButton className="mt-4" tone="secondary" onClick={onRetry}>
+          Retry
+        </ActionButton>
+      )}
     </div>
   );
 }
 
 function badgeFor(projection: DashboardProjection | null) {
   if (!projection) return { label: 'Loading', tone: 'progress' as const };
-  if (projection.installation.kind === 'installed') return { label: 'Installed', tone: 'success' as const };
-  if (projection.installation.kind === 'conflict') return { label: 'Attention required', tone: 'danger' as const };
+  if (projection.installation.kind === 'installed')
+    return { label: 'Installed', tone: 'success' as const };
+  if (projection.installation.kind === 'conflict')
+    return { label: 'Attention required', tone: 'danger' as const };
   return { label: 'Not installed', tone: 'warning' as const };
 }
 
@@ -113,6 +126,7 @@ export default function App({
   const [rootError, setRootError] = useState<string | null>(null);
   const [rootBusy, setRootBusy] = useState(false);
   const [progress, setProgress] = useState<RunProgress | null>(null);
+  const mounted = useRef(false);
   const lifecycleAbort = useRef<AbortController | null>(null);
   const [childState, setChildState] = useState<ChildViewState | null>(null);
   const childAbort = useRef<AbortController | null>(null);
@@ -121,17 +135,19 @@ export default function App({
 
   useEffect(() => {
     let live = true;
+    mounted.current = true;
     void Promise.all([
       client.caller.getManager(),
       client.caller.getCallingManager(),
       client.caller.getMetadata(),
     ])
       .then(([managerId, callingManagerId, metadata]) => {
-        if (live) setBoot({ managerId, callingManagerId, metadata });
+        if (live && mounted.current) setBoot({ managerId, callingManagerId, metadata });
       })
-      .catch((error) => live && setBootError(error));
+      .catch((error) => live && mounted.current && setBootError(error));
     return () => {
       live = false;
+      mounted.current = false;
       lifecycleAbort.current?.abort();
       tracker.dispose();
       client.dispose();
@@ -140,16 +156,18 @@ export default function App({
 
   const readDashboard = useCallback(
     async (knownInstallation?: Parameters<typeof loadDashboardProjection>[1]) => {
+      if (mounted.current) setDashboardLoading(true);
       try {
         const next = await loadDashboard(client.caller, knownInstallation);
+        if (!mounted.current) return next;
         setProjection(next);
         setRootError(null);
         return next;
       } catch (error) {
-        setRootError(rootErrorMessage(error));
+        if (mounted.current) setRootError(rootErrorMessage(error));
         throw error;
       } finally {
-        setDashboardLoading(false);
+        if (mounted.current) setDashboardLoading(false);
       }
     },
     [client.caller, loadDashboard],
@@ -280,9 +298,14 @@ export default function App({
         signal: controller.signal,
       };
       void operation(deps)
-        .then((next) => readDashboard(next))
-        .catch((error) => setRootError(rootErrorMessage(error)))
+        .then(async (next) => {
+          if (mounted.current) await readDashboard(next);
+        })
+        .catch((error) => {
+          if (mounted.current) setRootError(rootErrorMessage(error));
+        })
         .finally(() => {
+          if (!mounted.current) return;
           if (lifecycleAbort.current === controller) lifecycleAbort.current = null;
           setRootBusy(false);
           setProgress(null);
@@ -328,13 +351,19 @@ export default function App({
               onTeardown={runTeardown}
               busy={rootBusy}
               error={rootError}
+              onRetry={() => void readDashboard().catch(() => undefined)}
             />
-            {progress && <div className="mt-6"><ProgressPanel progress={progress} /></div>}
+            {progress && (
+              <div className="mt-6">
+                <ProgressPanel progress={progress} />
+              </div>
+            )}
           </>
         ) : (
           <RootFailure
             status={500}
             message={rootError ?? 'Unable to load PostgreSQL manager state'}
+            onRetry={() => void readDashboard().catch(() => undefined)}
           />
         )}
         {pendingDecision?.kind === 'teardown' && (
@@ -350,15 +379,9 @@ export default function App({
           Preparing PostgreSQL operation…
         </div>
       ) : childState.kind === 'create-approval' ? (
-        <CreateConnectionDialog
-          context={childState.context}
-          onDecision={decideCreate}
-        />
+        <CreateConnectionDialog context={childState.context} onDecision={decideCreate} />
       ) : childState.kind === 'delete-approval' ? (
-        <DeleteConnectionDialog
-          context={childState.context}
-          onDecision={decideDelete}
-        />
+        <DeleteConnectionDialog context={childState.context} onDecision={decideDelete} />
       ) : childState.kind === 'progress' ? (
         <ProgressPanel progress={childState.progress} />
       ) : (

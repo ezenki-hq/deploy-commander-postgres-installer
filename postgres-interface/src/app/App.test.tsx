@@ -111,7 +111,13 @@ describe('root App', () => {
         return { kind: 'not-installed' as const };
       }),
     });
-    render(<App client={client} services={services} loadDashboard={vi.fn().mockResolvedValue(installedDashboard)} />);
+    render(
+      <App
+        client={client}
+        services={services}
+        loadDashboard={vi.fn().mockResolvedValue(installedDashboard)}
+      />,
+    );
     await userEvent
       .setup()
       .click(await screen.findByRole('button', { name: /teardown postgresql/i }));
@@ -134,6 +140,38 @@ describe('root App', () => {
       .setup()
       .click(await screen.findByRole('button', { name: /teardown postgresql/i }));
     expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh a disposed client after unmounting pending teardown', async () => {
+    const client = rootClient();
+    const loadDashboard = vi.fn().mockResolvedValue(installedDashboard);
+    const services = appServices({
+      teardown: vi.fn(async (deps) => {
+        const confirmed = await deps.requestConfirmation('Teardown PostgreSQL?');
+        return confirmed ? { kind: 'not-installed' as const } : installed;
+      }),
+    });
+    const view = render(<App client={client} services={services} loadDashboard={loadDashboard} />);
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: /teardown postgresql/i }));
+    view.unmount();
+    await waitFor(() => expect(client.dispose).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loadDashboard).toHaveBeenCalledOnce();
+  });
+
+  it('offers retry when the initial dashboard projection fails', async () => {
+    const loadDashboard = vi
+      .fn()
+      .mockRejectedValueOnce(new PostgresRequestError(500, 'Unable to load PostgreSQL connections'))
+      .mockResolvedValue(installedDashboard);
+    render(<App client={rootClient()} services={appServices()} loadDashboard={loadDashboard} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Unable to load PostgreSQL connections',
+    );
+    await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }));
+    expect(await screen.findByRole('button', { name: /teardown postgresql/i })).toBeVisible();
   });
 });
 
@@ -163,7 +201,10 @@ describe('child App approval and failure states', () => {
     expect(client.caller.start).not.toHaveBeenCalled();
     await userEvent.setup().click(screen.getByRole('button', { name: /^approve$/i }));
     expect(await screen.findByText(/starting postgresql operation/i)).toBeVisible();
-    const createdConnection = { connection: { id: 'connection-1' }, config: {} } as RPC.CreateConnection;
+    const createdConnection = {
+      connection: { id: 'connection-1' },
+      config: {},
+    } as RPC.CreateConnection;
     completion.resolve(createdConnection);
     await waitFor(() =>
       expect(client.wire.close).toHaveBeenCalledWith({
@@ -208,7 +249,10 @@ describe('child App approval and failure states', () => {
             ? vi.fn(async (deps) => {
                 const decision = await deps.requestApproval(createContext);
                 if (!decision.allowed)
-                  throw new PostgresRequestError(499, 'PostgreSQL connection approval was rejected');
+                  throw new PostgresRequestError(
+                    499,
+                    'PostgreSQL connection approval was rejected',
+                  );
                 throw new Error('test must not approve');
               })
             : vi.fn(),
@@ -217,7 +261,10 @@ describe('child App approval and failure states', () => {
             ? vi.fn(async (deps) => {
                 const decision = await deps.requestApproval(deleteContext);
                 if (!decision.allowed)
-                  throw new PostgresRequestError(499, 'PostgreSQL connection deletion was rejected');
+                  throw new PostgresRequestError(
+                    499,
+                    'PostgreSQL connection deletion was rejected',
+                  );
                 throw new Error('test must not approve');
               })
             : vi.fn(),
@@ -289,7 +336,9 @@ describe('child App approval and failure states', () => {
       <App
         client={client}
         services={appServices({
-          createConnection: vi.fn().mockRejectedValue(new Error('password=secret SELECT * FROM users')),
+          createConnection: vi
+            .fn()
+            .mockRejectedValue(new Error('password=secret SELECT * FROM users')),
         })}
       />,
     );
@@ -314,7 +363,9 @@ describe('child App approval and failure states', () => {
       }),
     });
     const view = render(<App client={client} services={services} />);
-    expect(await screen.findByRole('dialog', { name: /approve postgresql connection/i })).toBeVisible();
+    expect(
+      await screen.findByRole('dialog', { name: /approve postgresql connection/i }),
+    ).toBeVisible();
     view.unmount();
     await waitFor(() => expect(client.wire.close).toHaveBeenCalled());
     expect(client.dispose).toHaveBeenCalledOnce();

@@ -8,11 +8,7 @@ import { ModalDialog } from './ModalDialog';
 
 describe('visual primitives', () => {
   it('renders the Deploy Commander shell and semantic status badge', () => {
-    render(
-      <ManagerShell badge={{ label: 'Installed', tone: 'success' }}>
-        content
-      </ManagerShell>,
-    );
+    render(<ManagerShell badge={{ label: 'Installed', tone: 'success' }}>content</ManagerShell>);
     expect(screen.getByRole('heading', { name: /postgresql manager/i })).toBeVisible();
     expect(screen.getByText('Installed')).toHaveClass('bg-emerald-50');
   });
