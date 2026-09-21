@@ -20,7 +20,6 @@ const resource: RPC.ResourceItem = {
 const installation: PostgresInstallation = {
   resource,
   administrator: { username: `dc_admin_${'a'.repeat(32)}`, password: 'admin-secret' },
-  platformConnection: { type: 'Platform', data: { network: 'postgres-network' } },
 };
 const explicitRequest = {
   currentManagerId: 'postgres-manager',
@@ -67,12 +66,10 @@ const target = (
   access: targetAccess,
   username: `dc_user_${'b'.repeat(32)}`,
   password: 'connection-secret',
-  platformConnection: installation.platformConnection,
   metadata: {
     access: targetAccess,
     username: `dc_user_${'b'.repeat(32)}`,
     password: 'connection-secret',
-    platform_connection: installation.platformConnection,
   },
 });
 const details = (connection: PostgresConnection): RPC.GetConnection => ({
@@ -111,7 +108,6 @@ function createDeps(
           version: '15',
           administrator: installation.administrator,
         },
-        platform_connection: installation.platformConnection,
       },
     }),
     getConnections: vi.fn().mockResolvedValue({

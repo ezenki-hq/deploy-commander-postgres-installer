@@ -80,21 +80,21 @@ export function parseCreateRequest(value: unknown): ParsedCreateRequest {
   if (value.action !== 'create-connection') {
     throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
   }
-  assertExactKeys(value, ['action', 'scope', 'operation', 'database', 'superuser', 'labels']);
   const labels = parseLabels(value.labels);
 
   if (value.scope === undefined) {
-    if (Object.keys(value).some((key) => key !== 'action' && key !== 'labels')) {
+    if (
+      value.operation !== undefined ||
+      value.database !== undefined ||
+      value.superuser !== undefined
+    ) {
       throw new PostgresRequestError(400, 'Incomplete PostgreSQL access request');
     }
     return { action: 'create-connection', requestedAccess: null, labels };
   }
 
   if (value.scope === 'database') {
-    if (
-      (value.operation !== 'create' && value.operation !== 'existing') ||
-      value.superuser !== undefined
-    ) {
+    if (value.operation !== 'create' && value.operation !== 'existing') {
       throw new PostgresRequestError(400, 'Invalid PostgreSQL database access request');
     }
     return {
@@ -108,15 +108,13 @@ export function parseCreateRequest(value: unknown): ParsedCreateRequest {
     };
   }
 
-  if (
-    value.scope === 'full' &&
-    typeof value.superuser === 'boolean' &&
-    value.operation === undefined &&
-    value.database === undefined
-  ) {
+  if (value.scope === 'full') {
+    if (value.superuser !== undefined && typeof value.superuser !== 'boolean') {
+      throw new PostgresRequestError(400, 'Invalid PostgreSQL access request');
+    }
     return {
       action: 'create-connection',
-      requestedAccess: { scope: 'full', superuser: value.superuser },
+      requestedAccess: { scope: 'full', superuser: value.superuser ?? false },
       labels,
     };
   }

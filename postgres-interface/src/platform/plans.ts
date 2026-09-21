@@ -6,11 +6,13 @@ import type { PostgresInstallation } from './resources';
 
 export const RUNNER_IMAGE = 'ezenki/deploy-commander-runner:latest';
 export const POSTGRES_IMAGE = 'postgres:15';
+export const POSTGRES_NETWORK_GROUP = 'postgres-internal';
 
 type RunnerService = {
   image: string;
   role?: 'runner';
   aliases?: string[];
+  network_groups?: string[];
   environment?: Record<string, string>;
   command?: string[];
   connections?: Array<{ type: 'Platform'; data: { network: string } }>;
@@ -34,12 +36,28 @@ export type RunnerMetadata = {
   connections?: { create?: ConnectionCreate[]; remove?: ConnectionRemove[] };
 };
 
-const readiness = `attempt=1
+const readiness = String.raw`log() {
+  printf '%s\n' "$1"
+}
+fail() {
+  printf '%s\n' "POSTGRES_MANAGER_ERROR: $1" >&2
+  exit "$2"
+}
+if [ -z "$PGCONNECT_TIMEOUT" ]; then PGCONNECT_TIMEOUT=5; fi
+export PGCONNECT_TIMEOUT
+trap 'status=$?; if [ "$status" -eq 0 ]; then log "POSTGRES_MANAGER: postgres-admin completed"; else printf "%s\\n" "POSTGRES_MANAGER_ERROR: postgres-admin failed (exit $status)" >&2; fi' EXIT
+log "POSTGRES_MANAGER: postgres-admin started"
+log "POSTGRES_MANAGER: waiting for PostgreSQL"
+attempt=1
 while ! pg_isready -q; do
-  if [ "$attempt" -ge 60 ]; then exit 1; fi
+  if [ "$attempt" -ge 60 ]; then
+    echo "POSTGRES_MANAGER_ERROR: postgres-unavailable" >&2
+    exit 47
+  fi
   attempt=$((attempt + 1))
   sleep 2
-done`;
+done
+log "POSTGRES_MANAGER: PostgreSQL ready"`;
 
 const roleSetup = String.raw`\getenv target_username TARGET_USERNAME
 \getenv target_password TARGET_PASSWORD
@@ -53,6 +71,7 @@ SELECT format(
 \gexec`;
 
 export const DATABASE_PROVISION_SCRIPT = String.raw`${readiness}
+log "POSTGRES_MANAGER: configuring database role"
 if ! psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
 \getenv database_owner DATABASE_OWNER
 SELECT format('CREATE ROLE %I NOLOGIN', :'database_owner')
@@ -60,14 +79,16 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_owner')
 \gexec
 ${roleSetup}
 SQL
-then exit 1; fi
+then fail "postgres-role-setup-failed" 41; fi
+log "POSTGRES_MANAGER: checking database ownership"
 database_owner=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = :'target_database';
 SQL
 )
 if [ -z "$database_owner" ]; then
-  psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+  log "POSTGRES_MANAGER: creating database"
+  psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-database-create-failed" 42
 \getenv target_database TARGET_DATABASE
 \getenv database_owner DATABASE_OWNER
 SELECT format('CREATE DATABASE %I OWNER %I', :'target_database', :'database_owner')
@@ -77,7 +98,8 @@ elif [ "$database_owner" != "$DATABASE_OWNER" ]; then
   echo "POSTGRES_MANAGER_ERROR: database-collision" >&2
   exit 45
 fi
-PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: granting database access"
+PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-grants-failed" 43
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 SELECT format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO %I', :'target_database', :'target_username')
@@ -85,9 +107,11 @@ SELECT format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO %I', :'target_database
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'target_username')
 \gexec
-SQL`;
+SQL
+exit 0`;
 
 export const EXISTING_DATABASE_SCRIPT = String.raw`${readiness}
+log "POSTGRES_MANAGER: checking requested database"
 database_exists=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 SELECT 1 FROM pg_database WHERE datname = :'target_database' AND datistemplate = false AND datallowconn = true;
@@ -97,14 +121,16 @@ if [ "$database_exists" != "1" ]; then
   echo "POSTGRES_MANAGER_ERROR: database-not-found" >&2
   exit 44
 fi
-psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: configuring database role"
+psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-role-setup-failed" 41
 ${roleSetup}
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 SELECT format('GRANT CONNECT, TEMPORARY, CREATE ON DATABASE %I TO %I', :'target_database', :'target_username')
 \gexec
 SQL
-PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: granting database access"
+PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-grants-failed" 43
 \getenv target_username TARGET_USERNAME
 SELECT format('GRANT USAGE, CREATE ON SCHEMA %I TO %I', n.nspname, :'target_username')
 FROM pg_namespace AS n
@@ -118,10 +144,12 @@ SELECT format('GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA %I TO %I', n.nspn
 FROM pg_namespace AS n
 WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema'
 \gexec
-SQL`;
+SQL
+exit 0`;
 
 export const CONSTRAINED_FULL_SCRIPT = String.raw`${readiness}
-psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: configuring full-access role"
+psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-role-setup-failed" 41
 \getenv target_username TARGET_USERNAME
 \getenv target_password TARGET_PASSWORD
 SELECT format('CREATE ROLE %I', :'target_username')
@@ -130,18 +158,21 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 SELECT format('ALTER ROLE %I WITH CREATEDB LOGIN PASSWORD %L NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'target_username', :'target_password')
 \gexec
 SQL
-databases=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true") || exit 1
-while IFS= read -r TARGET_DATABASE; do
+databases=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true") || fail "postgres-database-list-failed" 42
+log "POSTGRES_MANAGER: granting database access"
+printf '%s\n' "$databases" | while IFS= read -r TARGET_DATABASE; do
   [ -z "$TARGET_DATABASE" ] && continue
-  PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+  PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-grants-failed" 43
 \getenv target_username TARGET_USERNAME
 SELECT format('GRANT CONNECT, TEMPORARY ON DATABASE %I TO %I', current_database(), :'target_username')
 \gexec
 SQL
-done <<< "$databases"`;
+done || fail "postgres-grants-failed" 43
+exit 0`;
 
 export const SUPERUSER_SCRIPT = String.raw`${readiness}
-psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: configuring superuser role"
+psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-role-setup-failed" 41
 \getenv target_username TARGET_USERNAME
 \getenv target_password TARGET_PASSWORD
 SELECT format('CREATE ROLE %I', :'target_username')
@@ -149,13 +180,16 @@ WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec
 SELECT format('ALTER ROLE %I WITH SUPERUSER LOGIN PASSWORD %L', :'target_username', :'target_password')
 \gexec
-SQL`;
+SQL
+exit 0`;
 
 export const ROLE_CLEANUP_SCRIPT = String.raw`${readiness}
-databases=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true") || exit 1
-while IFS= read -r TARGET_DATABASE; do
+log "POSTGRES_MANAGER: listing databases for cleanup"
+databases=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true") || fail "postgres-database-list-failed" 42
+log "POSTGRES_MANAGER: removing role ownership"
+printf '%s\n' "$databases" | while IFS= read -r TARGET_DATABASE; do
   [ -z "$TARGET_DATABASE" ] && continue
-  PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+  PGDATABASE="$TARGET_DATABASE" psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-cleanup-failed" 43
 \getenv target_username TARGET_USERNAME
 SELECT format('REASSIGN OWNED BY %I TO CURRENT_USER', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
@@ -164,15 +198,17 @@ SELECT format('DROP OWNED BY %I', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec
 SQL
-done <<< "$databases"
-psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL'
+done || fail "postgres-cleanup-failed" 43
+psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-role-drop-failed" 44
 \getenv target_username TARGET_USERNAME
 SELECT format('DROP ROLE %I', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec
-SQL`;
+SQL
+exit 0`;
 
 export const DATABASE_CLEANUP_SCRIPT = String.raw`${readiness}
+log "POSTGRES_MANAGER: checking database ownership"
 owner=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = :'target_database';
@@ -182,7 +218,8 @@ if [ -n "$owner" ] && [ "$owner" != "$DATABASE_OWNER" ]; then
   echo "POSTGRES_MANAGER_ERROR: database-owner-mismatch" >&2
   exit 46
 fi
-psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || exit 1
+log "POSTGRES_MANAGER: removing database and roles"
+psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-database-cleanup-failed" 43
 \getenv target_database TARGET_DATABASE
 \getenv target_username TARGET_USERNAME
 \getenv database_owner DATABASE_OWNER
@@ -200,7 +237,8 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 SELECT format('DROP ROLE %I', :'database_owner')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_owner')
 \gexec
-SQL`;
+SQL
+exit 0`;
 
 function adminEnvironment(installation: PostgresInstallation): Record<string, string> {
   return {
@@ -209,6 +247,7 @@ function adminEnvironment(installation: PostgresInstallation): Record<string, st
     PGDATABASE: 'postgres',
     PGUSER: installation.administrator.username,
     PGPASSWORD: installation.administrator.password,
+    PGCONNECT_TIMEOUT: '5',
   };
 }
 
@@ -220,7 +259,7 @@ function adminService(
   return {
     image: POSTGRES_IMAGE,
     role: 'runner',
-    connections: [installation.platformConnection],
+    network_groups: [POSTGRES_NETWORK_GROUP],
     environment: { ...adminEnvironment(installation), ...environment },
     command: ['sh', '-ceu', script],
   };
@@ -249,7 +288,6 @@ function accessScript(access: AccessRequest): string {
 function connectionMetadata(
   login: LoginCredentials,
   access: AccessRequest,
-  platformConnection: PostgresInstallation['platformConnection'],
 ): Record<string, unknown> {
   return {
     host: 'postgres',
@@ -258,7 +296,6 @@ function connectionMetadata(
     username: login.username,
     password: login.password,
     access,
-    platform_connection: platformConnection,
   };
 }
 
@@ -271,6 +308,7 @@ export function buildInstallPlan(administrator: {
       postgres: {
         image: POSTGRES_IMAGE,
         aliases: ['postgres'],
+        network_groups: [POSTGRES_NETWORK_GROUP],
         environment: {
           POSTGRES_USER: administrator.username,
           POSTGRES_PASSWORD: administrator.password,
@@ -321,11 +359,7 @@ export function buildProvisionPlan(input: {
           name: 'postgres-connection',
           manager: input.callerId,
           resource: { id: input.installation.resource.id },
-          metadata: connectionMetadata(
-            input.login,
-            input.access,
-            input.installation.platformConnection,
-          ),
+          metadata: connectionMetadata(input.login, input.access),
           labels,
         },
       ],

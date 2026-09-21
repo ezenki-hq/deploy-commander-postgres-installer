@@ -67,7 +67,6 @@ function fingerprint(connection: PostgresConnection): string {
     authority: connection.authority,
     access: connection.access,
     username: connection.username,
-    platformConnection: connection.platformConnection,
   });
 }
 

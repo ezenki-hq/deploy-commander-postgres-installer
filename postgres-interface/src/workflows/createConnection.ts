@@ -97,6 +97,8 @@ function runFailure(error: RunFailedError): PostgresRequestError {
       409,
       'The PostgreSQL database already exists outside manager ownership',
     );
+  if (error.marker === 'postgres-unavailable')
+    return new PostgresRequestError(500, 'PostgreSQL is installed but unavailable');
   return new PostgresRequestError(500, 'PostgreSQL connection creation failed');
 }
 

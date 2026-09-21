@@ -51,8 +51,10 @@ Use an existing database:
 Constrained full access:
 
 ```json
-{ "action": "create-connection", "scope": "full", "superuser": false }
+{ "action": "create-connection", "scope": "full" }
 ```
+
+For full access, omitting `superuser` defaults it to `false`.
 
 Dedicated PostgreSQL superuser access:
 
@@ -60,9 +62,11 @@ Dedicated PostgreSQL superuser access:
 { "action": "create-connection", "scope": "full", "superuser": true }
 ```
 
-The parser rejects unknown fields, incomplete access objects, invalid database names, and
-non-string label values. Database names must be non-empty, contain no NUL, not be `template0`
-or `template1`, and fit within 63 UTF-8 bytes.
+`superuser`, `database`, and `labels` are optional request fields. Database-scoped access still
+requires `operation` and `database`; full access ignores database-scoped fields. The parser ignores
+unknown fields and fields unused by the selected scope. When supplied, labels must have string
+values. Database names must be non-empty, contain no NUL, not be `template0` or `template1`, and fit
+within 63 UTF-8 bytes.
 
 The three labels reserved for the manager are:
 
@@ -134,7 +138,6 @@ manager returns only after the connection record is visible.
         username: string,
         password: string,
         access: { scope: 'database', operation: 'create', database: 'orders' },
-        platform_connection: { type: 'Platform', data: { network: string } },
       },
     },
   },
@@ -142,9 +145,8 @@ manager returns only after the connection record is visible.
 ```
 
 For full access, `metadata.database` is `postgres`; `metadata.access` remains the authority
-for constrained versus superuser access. Pass the complete `platform_connection` unchanged in
-the consuming service's `connections` array. Treat the returned metadata, especially the
-password, as a secret.
+for constrained versus superuser access. The returned metadata contains the logical PostgreSQL
+connection details only; treat it, especially the password, as a secret.
 
 ## Delete a connection
 
@@ -222,5 +224,4 @@ normalized message and retry only after the underlying resource or connection st
 - Expect an approval decision for every create and delete request, including exact reuse.
 - Await `child.close`, handle statuses `400`, `404`, `409`, `499`, and `500`, and treat `499` as a user decision.
 - Use the returned `RPC.CreateConnection` metadata as sensitive configuration.
-- Pass `platform_connection` unchanged to the consuming runner plan.
 - Derive all durable decisions from the current resource and connection records.

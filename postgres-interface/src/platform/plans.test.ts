@@ -1,7 +1,22 @@
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { expect, it } from 'vitest';
 import type { PostgresConnection } from './connections';
 import type { PostgresInstallation } from './resources';
-import { buildDeletePlan, buildInstallPlan, buildProvisionPlan, buildTeardownPlan } from './plans';
+import {
+  CONSTRAINED_FULL_SCRIPT,
+  DATABASE_CLEANUP_SCRIPT,
+  DATABASE_PROVISION_SCRIPT,
+  EXISTING_DATABASE_SCRIPT,
+  ROLE_CLEANUP_SCRIPT,
+  SUPERUSER_SCRIPT,
+  buildDeletePlan,
+  buildInstallPlan,
+  buildProvisionPlan,
+  buildTeardownPlan,
+} from './plans';
 
 const administrator = {
   username: `dc_admin_${'a'.repeat(32)}`,
@@ -20,7 +35,6 @@ const installation: PostgresInstallation = {
     updated_at: '2026-09-20T00:00:00Z',
   },
   administrator,
-  platformConnection: { type: 'Platform', data: { network: 'postgres-network' } },
 };
 
 const target = {
@@ -43,7 +57,6 @@ const target = {
   access: { scope: 'database' as const, operation: 'create' as const, database: 'orders' },
   username: `dc_user_${'b'.repeat(32)}`,
   password: 'connection-secret',
-  platformConnection: installation.platformConnection,
   metadata: {},
 } satisfies PostgresConnection;
 
@@ -53,6 +66,7 @@ it('builds one stable postgres service, volume, and resource', () => {
       postgres: {
         image: 'postgres:15',
         aliases: ['postgres'],
+        network_groups: ['postgres-internal'],
         environment: {
           POSTGRES_USER: administrator.username,
           POSTGRES_PASSWORD: administrator.password,
@@ -89,8 +103,10 @@ it('runs psql before creating the labeled connection record', () => {
   expect(plan.services!['postgres-admin']).toMatchObject({
     image: 'postgres:15',
     role: 'runner',
-    connections: [installation.platformConnection],
+    network_groups: ['postgres-internal'],
+    environment: { PGCONNECT_TIMEOUT: '5' },
   });
+  expect(plan.services!['postgres-admin']).not.toHaveProperty('connections');
   expect(plan.connections?.create).toEqual([
     expect.objectContaining({
       name: 'postgres-connection',
@@ -111,9 +127,56 @@ it('runs psql before creating the labeled connection record', () => {
     username: `dc_user_${'b'.repeat(32)}`,
     password: 'connection-secret',
     access: { scope: 'database', operation: 'create', database: 'orders' },
-    platform_connection: installation.platformConnection,
   });
+  expect(plan.connections!.create![0].metadata).not.toHaveProperty('platform_connection');
   expect(JSON.stringify(plan)).not.toContain('object_hooks');
+});
+
+it('emits safe lifecycle logs and exits from every postgres admin script', () => {
+  const scripts = [
+    DATABASE_PROVISION_SCRIPT,
+    EXISTING_DATABASE_SCRIPT,
+    CONSTRAINED_FULL_SCRIPT,
+    SUPERUSER_SCRIPT,
+    ROLE_CLEANUP_SCRIPT,
+    DATABASE_CLEANUP_SCRIPT,
+  ];
+
+  for (const script of scripts) {
+    expect(script).toContain('POSTGRES_MANAGER: postgres-admin started');
+    expect(script).toContain('POSTGRES_MANAGER: postgres-admin completed');
+    expect(script).toContain('POSTGRES_MANAGER_ERROR: postgres-admin failed');
+    expect(script).toContain('POSTGRES_MANAGER_ERROR: postgres-unavailable');
+    expect(script).toContain('PGCONNECT_TIMEOUT');
+    expect(script.trimEnd()).toMatch(/exit 0$/);
+    expect(script).not.toContain('|| exit 1');
+    expect(script).not.toContain('<<<');
+    expect(() => execFileSync('sh', ['-n', '-c', script])).not.toThrow();
+  }
+});
+
+it('runs a one-shot postgres admin command to completion with safe logs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'postgres-admin-'));
+  writeFileSync(join(root, 'pg_isready'), '#!/bin/sh\nexit 0\n');
+  writeFileSync(join(root, 'psql'), '#!/bin/sh\ncat >/dev/null\nexit 0\n');
+  chmodSync(join(root, 'pg_isready'), 0o755);
+  chmodSync(join(root, 'psql'), 0o755);
+
+  try {
+    const output = execFileSync('sh', ['-ceu', SUPERUSER_SCRIPT], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH ?? ''}`,
+        PGCONNECT_TIMEOUT: '5',
+      },
+    });
+    expect(output).toContain('POSTGRES_MANAGER: postgres-admin started');
+    expect(output).toContain('POSTGRES_MANAGER: configuring superuser role');
+    expect(output).toContain('POSTGRES_MANAGER: postgres-admin completed');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 it.each([

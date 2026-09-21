@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CreateConnectionDialog } from '../components/CreateConnectionDialog';
 import { Dashboard } from '../components/Dashboard';
 import { DeleteConnectionDialog } from '../components/DeleteConnectionDialog';
-import { FailurePanel } from '../components/FailurePanel';
 import { ManagerShell } from '../components/ManagerShell';
+import { ModalDialog } from '../components/ModalDialog';
 import { ProgressPanel } from '../components/ProgressPanel';
 import { TeardownDialog } from '../components/TeardownDialog';
 import { ActionButton } from '../components/ActionButton';
@@ -55,6 +55,40 @@ function rootErrorMessage(error: unknown): string {
   return error instanceof PostgresRequestError
     ? error.message
     : 'Unable to load PostgreSQL manager state';
+}
+
+function childErrorMessage(error: unknown): string {
+  return error instanceof PostgresRequestError
+    ? error.message
+    : 'PostgreSQL manager operation failed';
+}
+
+function ChildFailureDialog({
+  status,
+  message,
+  onClose,
+}: {
+  status: number;
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <ModalDialog
+      title={`PostgreSQL operation failed (${status})`}
+      description="The requested PostgreSQL operation could not be prepared."
+      onCancel={onClose}
+      tone="danger"
+      actions={
+        <ActionButton tone="secondary" onClick={onClose}>
+          Close
+        </ActionButton>
+      }
+    >
+      <p role="alert" className="rounded-lg bg-rose-50 p-3 text-rose-900">
+        {message}
+      </p>
+    </ModalDialog>
+  );
 }
 
 function RootFailure({
@@ -182,19 +216,13 @@ export default function App({
   }, [boot, projection, readDashboard]);
 
   const closeFailure = useCallback(
-    (error: unknown) => {
+    (status: number, message: string) => {
       if (childClosed.current) return;
       childClosed.current = true;
       client.wire.close({
         manager: boot?.managerId ?? 'postgres',
         ok: false,
-        error: {
-          message:
-            error instanceof PostgresRequestError
-              ? error.message
-              : 'PostgreSQL manager operation failed',
-          status: statusOf(error),
-        },
+        error: { message, status },
       });
     },
     [boot?.managerId, client.wire],
@@ -255,15 +283,14 @@ export default function App({
           throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
         }
       } catch (error) {
+        const status = statusOf(error);
+        const message = childErrorMessage(error);
         setChildState({
           kind: 'failure',
-          status: statusOf(error),
-          message:
-            error instanceof PostgresRequestError
-              ? error.message
-              : 'PostgreSQL manager operation failed',
+          status,
+          message,
         });
-        closeFailure(error);
+        if (status === 499) closeFailure(status, message);
       }
     };
     void run();
@@ -385,7 +412,11 @@ export default function App({
       ) : childState.kind === 'progress' ? (
         <ProgressPanel progress={childState.progress} />
       ) : (
-        <FailurePanel status={childState.status} message={childState.message} />
+        <ChildFailureDialog
+          status={childState.status}
+          message={childState.message}
+          onClose={() => closeFailure(childState.status, childState.message)}
+        />
       )}
     </ManagerShell>
   );

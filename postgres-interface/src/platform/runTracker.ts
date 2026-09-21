@@ -20,7 +20,7 @@ export interface RunEventSource {
 export class RunFailedError extends Error {
   constructor(
     readonly runId: string,
-    readonly marker: 'database-not-found' | 'database-collision' | null,
+    readonly marker: 'database-not-found' | 'database-collision' | 'postgres-unavailable' | null,
   ) {
     super('PostgreSQL operation failed');
     this.name = 'RunFailedError';
@@ -56,10 +56,14 @@ function runStatus(value: unknown): number {
   throw new Error('Unknown PostgreSQL run status');
 }
 
-function markerFrom(message: unknown): 'database-not-found' | 'database-collision' | null {
+function markerFrom(
+  message: unknown,
+): 'database-not-found' | 'database-collision' | 'postgres-unavailable' | null {
   if (typeof message !== 'string') return null;
   if (message.includes('POSTGRES_MANAGER_ERROR: database-not-found')) return 'database-not-found';
   if (message.includes('POSTGRES_MANAGER_ERROR: database-collision')) return 'database-collision';
+  if (message.includes('POSTGRES_MANAGER_ERROR: postgres-unavailable'))
+    return 'postgres-unavailable';
   return null;
 }
 
@@ -76,7 +80,8 @@ export function createRunTracker(caller: RPCCaller, source: RunEventSource): Run
       let settled = false;
       let runId: string | null = null;
       let eventRunId: string | null = null;
-      let marker: 'database-not-found' | 'database-collision' | null = null;
+      let marker: 'database-not-found' | 'database-collision' | 'postgres-unavailable' | null =
+        null;
       const timers: {
         poll?: ReturnType<typeof setInterval>;
         timeout?: ReturnType<typeof setTimeout>;

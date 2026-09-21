@@ -219,3 +219,33 @@ it('returns only a typed safe marker from a failed run log', async () => {
   });
   tracker.dispose();
 });
+
+it('recognizes postgres-unavailable without exposing runner log text', async () => {
+  const caller = fakeCaller({
+    start: vi
+      .fn()
+      .mockResolvedValue({ id: 'run-1', queued_at: '2026-09-20T00:00:00Z', status: STATUS_QUEUED }),
+    getRun: vi.fn().mockResolvedValue(failedRun('run-1')),
+  });
+  const tracker = createRunTracker(caller, events);
+  const waiting = tracker.startAndWait(
+    startOptions('note-1'),
+    vi.fn(),
+    new AbortController().signal,
+  );
+  events.publish(runStartEvent({ id: 'run-1', action: 'create-connection', note: 'note-1' }));
+  events.publish(
+    runLogEvent({
+      id: 'run-1',
+      seq: 3,
+      message: 'POSTGRES_MANAGER_ERROR: postgres-unavailable',
+    }),
+  );
+  events.publish(runUpdateEvent({ id: 'run-1', status: STATUS_FAILED, seq: 4 }));
+  await expect(waiting).rejects.toMatchObject({
+    runId: 'run-1',
+    marker: 'postgres-unavailable',
+    message: 'PostgreSQL operation failed',
+  });
+  tracker.dispose();
+});

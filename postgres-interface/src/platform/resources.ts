@@ -12,7 +12,6 @@ export type InstallationProjection =
 export type PostgresInstallation = {
   resource: RPC.ResourceItem;
   administrator: { username: string; password: string };
-  platformConnection: { type: 'Platform'; data: { network: string } };
 };
 
 function isResource(value: unknown): value is RPC.ResourceItem {
@@ -89,21 +88,6 @@ export async function loadInstallationProjection(
   return { kind: 'installed', resource: resources[0] };
 }
 
-function isPlatformConnection(value: unknown): value is PostgresInstallation['platformConnection'] {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const connection = value as { type?: unknown; data?: unknown };
-  if (
-    connection.type !== 'Platform' ||
-    typeof connection.data !== 'object' ||
-    connection.data === null
-  )
-    return false;
-  return (
-    typeof (connection.data as { network?: unknown }).network === 'string' &&
-    (connection.data as { network: string }).network.trim() !== ''
-  );
-}
-
 export async function readInstallation(
   caller: RPCCaller,
   resource: RPC.ResourceItem,
@@ -138,14 +122,12 @@ export async function readInstallation(
     typeof administrator.username !== 'string' ||
     !ADMIN_USERNAME.test(administrator.username) ||
     typeof administrator.password !== 'string' ||
-    administrator.password.trim() === '' ||
-    !isPlatformConnection(config.platform_connection)
+    administrator.password.trim() === ''
   ) {
     throw new PostgresRequestError(400, 'PostgreSQL resource configuration is invalid');
   }
   return {
     resource,
     administrator: { username: administrator.username, password: administrator.password },
-    platformConnection: config.platform_connection,
   };
 }

@@ -26,7 +26,6 @@ const resource: RPC.ResourceItem = {
 const installation: PostgresInstallation = {
   resource,
   administrator: { username: `dc_admin_${'a'.repeat(32)}`, password: 'admin-secret' },
-  platformConnection: { type: 'Platform', data: { network: 'postgres-network' } },
 };
 const request = {
   currentManagerId: 'postgres-manager',
@@ -75,12 +74,10 @@ const connection = (
   access,
   username: `dc_user_${'b'.repeat(32)}`,
   password: 'connection-secret',
-  platformConnection: installation.platformConnection,
   metadata: {
     access,
     username: `dc_user_${'b'.repeat(32)}`,
     password: 'connection-secret',
-    platform_connection: installation.platformConnection,
   },
 });
 const details = (item: PostgresConnection): RPC.GetConnection => ({
@@ -111,7 +108,6 @@ function createDeps(overrides: Partial<CreateConnectionDeps> = {}) {
         resource_type: 'postgres',
         name: 'postgres',
         metadata: { engine: 'postgres', version: '15', administrator: installation.administrator },
-        platform_connection: installation.platformConnection,
       },
     }),
     getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
@@ -251,6 +247,7 @@ describe('createPostgresConnection', () => {
   it.each([
     ['database-not-found', 404],
     ['database-collision', 409],
+    ['postgres-unavailable', 500],
     [null, 500],
   ] as const)('maps run marker %s to status %s', async (marker, status) => {
     const { deps } = createDeps({

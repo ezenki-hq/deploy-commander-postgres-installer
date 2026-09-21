@@ -14,7 +14,6 @@ export type PostgresConnection = {
   access: AccessRequest;
   username: string;
   password: string;
-  platformConnection: { type: 'Platform'; data: { network: string } };
   metadata: Record<string, unknown>;
 };
 
@@ -29,19 +28,6 @@ function invalidConnection(
   message = 'PostgreSQL connection data is invalid',
 ): PostgresRequestError {
   return new PostgresRequestError(409, message);
-}
-
-function parsePlatform(value: unknown): PostgresConnection['platformConnection'] {
-  if (
-    !isRecord(value) ||
-    value.type !== 'Platform' ||
-    !isRecord(value.data) ||
-    typeof value.data.network !== 'string' ||
-    value.data.network.trim() === ''
-  ) {
-    throw invalidConnection();
-  }
-  return { type: 'Platform', data: { network: value.data.network } };
 }
 
 function parseAccess(value: unknown, authority: ConnectionAuthority): AccessRequest {
@@ -158,7 +144,6 @@ export async function readPostgresConnection(
     metadata.password.trim() === ''
   )
     throw invalidConnection();
-  const platformConnection = parsePlatform(metadata.platform_connection);
   return {
     item: connection,
     managerId: connection.manager,
@@ -167,7 +152,6 @@ export async function readPostgresConnection(
     access,
     username: metadata.username,
     password: metadata.password,
-    platformConnection,
     metadata,
   };
 }

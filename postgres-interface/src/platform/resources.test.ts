@@ -63,7 +63,7 @@ describe('loadInstallationProjection', () => {
 });
 
 describe('readInstallation', () => {
-  it('reads administrator credentials and the exact platform connection', async () => {
+  it('reads administrator credentials without requiring a platform connection', async () => {
     const caller = fakeCaller({
       getResource: vi.fn().mockResolvedValue({
         resource: postgresResource,
@@ -81,7 +81,6 @@ describe('readInstallation', () => {
               password: 'admin-secret',
             },
           },
-          platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
         },
       }),
     });
@@ -91,7 +90,6 @@ describe('readInstallation', () => {
         username: 'dc_admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         password: 'admin-secret',
       },
-      platformConnection: { type: 'Platform', data: { network: 'postgres-network' } },
     });
   });
 

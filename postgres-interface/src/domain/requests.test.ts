@@ -33,10 +33,61 @@ describe('parseCreateRequest', () => {
     });
   });
 
+  it('ignores unknown create-request fields', () => {
+    expect(
+      parseCreateRequest({
+        action: 'create-connection',
+        scope: 'database',
+        operation: 'create',
+        database: 'corvo',
+        unused: 'ignored',
+      }),
+    ).toEqual({
+      action: 'create-connection',
+      requestedAccess: { scope: 'database', operation: 'create', database: 'corvo' },
+      labels: {},
+    });
+  });
+
+  it('ignores access fields unused by the selected scope', () => {
+    expect(
+      parseCreateRequest({
+        action: 'create-connection',
+        scope: 'database',
+        operation: 'create',
+        database: 'corvo',
+        superuser: false,
+      }),
+    ).toEqual({
+      action: 'create-connection',
+      requestedAccess: { scope: 'database', operation: 'create', database: 'corvo' },
+      labels: {},
+    });
+    expect(
+      parseCreateRequest({
+        action: 'create-connection',
+        scope: 'full',
+        superuser: true,
+        operation: 'create',
+        database: 'ignored',
+      }),
+    ).toEqual({
+      action: 'create-connection',
+      requestedAccess: { scope: 'full', superuser: true },
+      labels: {},
+    });
+  });
+
+  it('defaults an omitted full-access superuser flag to false', () => {
+    expect(parseCreateRequest({ action: 'create-connection', scope: 'full' })).toEqual({
+      action: 'create-connection',
+      requestedAccess: { scope: 'full', superuser: false },
+      labels: {},
+    });
+  });
+
   it.each([
     { action: 'create-connection', scope: 'database', operation: 'create' },
-    { action: 'create-connection', scope: 'full' },
-    { action: 'create-connection', extra: true },
     { action: 'create-connection', labels: { ' postgres.access ': 'full' } },
     { action: 'create-connection', scope: 'database', operation: 'create', database: 'template1' },
   ])('rejects invalid or incomplete metadata %#', (metadata) => {

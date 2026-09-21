@@ -280,7 +280,7 @@ describe('child App approval and failure states', () => {
     },
   );
 
-  it('renders and closes a preflight failure instead of going blank', async () => {
+  it('shows a preflight failure dialog before closing the child request', async () => {
     const client = childClient({ action: 'create-connection' });
     render(
       <App
@@ -292,16 +292,23 @@ describe('child App approval and failure states', () => {
         })}
       />,
     );
-    expect(await screen.findByRole('alert')).toHaveTextContent('PostgreSQL is not installed');
+    expect(
+      await screen.findByRole('dialog', { name: /postgresql operation failed/i }),
+    ).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent('PostgreSQL is not installed');
+    expect(client.wire.close).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole('button', { name: /^close$/i }));
     expect(client.wire.close).toHaveBeenCalledWith(
       expect.objectContaining({ ok: false, error: expect.objectContaining({ status: 404 }) }),
     );
   });
 
-  it('closes invalid child actions with status 400', async () => {
+  it('shows invalid child actions before closing with status 400', async () => {
     const client = childClient({ action: 'unsupported-action' });
     render(<App client={client} services={appServices()} />);
     expect(await screen.findByRole('alert')).toHaveTextContent(/unsupported postgresql action/i);
+    expect(client.wire.close).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole('button', { name: /^close$/i }));
     expect(client.wire.close).toHaveBeenCalledWith({
       manager: 'postgres-manager',
       ok: false,
@@ -345,6 +352,8 @@ describe('child App approval and failure states', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('PostgreSQL manager operation failed');
     expect(alert).not.toHaveTextContent(/secret|password|select/i);
+    expect(client.wire.close).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole('button', { name: /^close$/i }));
     expect(client.wire.close).toHaveBeenCalledWith({
       manager: 'postgres-manager',
       ok: false,

@@ -34,7 +34,6 @@ const details = (
       username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       password: 'connection-secret',
       access,
-      platform_connection: { type: 'Platform', data: { network: 'postgres-network' } },
     },
   },
 });
@@ -67,7 +66,8 @@ describe('readPostgresConnection', () => {
   it('parses database connection authority and metadata', async () => {
     const connection = item('connection-1');
     const caller = fakeCaller({ getConnection: vi.fn().mockResolvedValue(details(connection)) });
-    await expect(readPostgresConnection(caller, connection)).resolves.toMatchObject({
+    const result = await readPostgresConnection(caller, connection);
+    expect(result).toMatchObject({
       managerId: 'consumer-1',
       resourceId: 'resource-1',
       authority: { access: 'database', database: 'orders', origin: 'managed' },
@@ -75,6 +75,7 @@ describe('readPostgresConnection', () => {
       username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       password: 'connection-secret',
     });
+    expect(result).not.toHaveProperty('platformConnection');
   });
 
   it('rejects malformed authority labels and preserves the database', async () => {
