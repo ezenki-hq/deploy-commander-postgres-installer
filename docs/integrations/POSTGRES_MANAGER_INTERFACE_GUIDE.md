@@ -19,10 +19,10 @@ Open the PostgreSQL manager as a child interface with a flat metadata object. Ev
 including an exact reuse of an existing connection, displays an approval dialog. Rejection
 closes the child with status `499`; there is no remembered approval.
 
-Labels-only; the user chooses access in the dialog:
+Choose access in the dialog without supplying caller labels:
 
 ```json
-{ "action": "create-connection", "labels": { "team": "payments" } }
+{ "action": "create-connection" }
 ```
 
 Create a new named database:
@@ -62,11 +62,12 @@ Dedicated PostgreSQL superuser access:
 { "action": "create-connection", "scope": "full", "superuser": true }
 ```
 
-`superuser`, `database`, and `labels` are optional request fields. Database-scoped access still
-requires `operation` and `database`; full access ignores database-scoped fields. The parser ignores
-unknown fields and fields unused by the selected scope. When supplied, labels must have string
-values. Database names must be non-empty, contain no NUL, not be `template0` or `template1`, and fit
-within 63 UTF-8 bytes.
+`superuser`, `database`, and `labels` are optional request fields. Callers may omit `labels`; the
+manager still adds its reserved access labels to the connection. Database-scoped access requires
+`operation` and `database`; full access ignores database-scoped fields. The parser ignores unknown
+fields and fields unused by the selected scope. When supplied, labels must have string values.
+Database names must be non-empty, contain no NUL, not be `template0` or `template1`, and fit within
+63 UTF-8 bytes.
 
 The three labels reserved for the manager are:
 

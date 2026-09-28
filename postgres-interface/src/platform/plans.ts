@@ -18,6 +18,14 @@ type RunnerService = {
   connections?: Array<{ type: 'Platform'; data: { network: string } }>;
   resources?: Array<Record<string, unknown>>;
   volumes?: Array<{ name: string; mount_path: string }>;
+  health_check?: {
+    test: string[];
+    interval_seconds?: number;
+    timeout_seconds?: number;
+    start_period_seconds?: number;
+    retries?: number;
+    wait_timeout_seconds?: number;
+  };
 };
 
 type ConnectionCreate = {
@@ -309,6 +317,17 @@ export function buildInstallPlan(administrator: {
         image: POSTGRES_IMAGE,
         aliases: ['postgres'],
         network_groups: [POSTGRES_NETWORK_GROUP],
+        health_check: {
+          test: [
+            'CMD-SHELL',
+            'pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+          ],
+          interval_seconds: 10,
+          timeout_seconds: 5,
+          start_period_seconds: 30,
+          retries: 3,
+          wait_timeout_seconds: 300,
+        },
         environment: {
           POSTGRES_USER: administrator.username,
           POSTGRES_PASSWORD: administrator.password,
