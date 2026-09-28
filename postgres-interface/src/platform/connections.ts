@@ -51,7 +51,7 @@ function parseAccess(value: unknown, authority: ConnectionAuthority): AccessRequ
 }
 
 function labelsOf(item: RPC.ConnectionItem): Record<string, string> {
-  if (!item.labels) throw invalidConnection();
+  if (!item.labels) return {};
   return item.labels;
 }
 
@@ -126,6 +126,7 @@ export async function readPostgresConnection(
     throw invalidConnection();
   }
   const connection = details?.connection;
+  console.log(connection);
   const metadata = details?.config?.metadata;
   if (
     !validSummary(connection) ||

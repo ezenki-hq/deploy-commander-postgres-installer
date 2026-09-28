@@ -75,7 +75,7 @@ The backend remains the final authorization boundary.
 Install the package:
 
 ```sh
-npm install @ezenki/deploy-commander-installer-interface@^0.5.0
+npm install @ezenki/deploy-commander-installer-interface@^0.6.2
 ```
 
 The package provides:
@@ -230,6 +230,30 @@ Label behavior on repeat publishes is explicit:
 - Supplying `labels` makes the object the exact desired label set.
 - Supplying `{}` removes all existing labels.
 
+Platform credential permission grants can also be configured for a manager:
+
+```json
+{
+  "name": "example-manager",
+  "kind": "pipeline",
+  "permissions": {
+    "platform_credentials": {
+      "add": ["docker"],
+      "remove": ["docker"]
+    }
+  },
+  "buildDirectory": "dist"
+}
+```
+
+Each list names the exact platform and grants that action independently. Omit
+`permissions` on a repeat publish to preserve current grants. Supplying a
+`permissions` object replaces the full grant set; use `"permissions": {}` to
+remove all grants. Platform names are checked against the connected agent.
+These are manager authorization grants only. Never put registry usernames,
+passwords, tokens, or other credential values in `deploy-commander.json` or the
+published build directory.
+
 HTTP and validation failures are reported as a single sanitized error without
 printing the configured password or authentication token. If initial upload
 fails after creating a manager, rerun the same publish command to replace its
@@ -336,11 +360,7 @@ try {
   const run = await caller.getRun(runId);
   console.log(run);
 } catch (error: any) {
-  console.error(
-    error?.message ?? "RPC call failed",
-    error?.status,
-    error?.details,
-  );
+  console.error(error?.message ?? "RPC call failed", error?.status, error?.details);
 }
 ```
 
@@ -632,14 +652,91 @@ Example:
 ```ts
 const metadata = await caller.getMetadata();
 
-if (
-  metadata &&
-  typeof metadata === "object" &&
-  typeof metadata.resourceId === "string"
-) {
+if (metadata && typeof metadata === "object" && typeof metadata.resourceId === "string") {
   console.log(metadata.resourceId);
 }
 ```
+
+### Platform Credentials
+
+Platform credentials are stored by the agent's platform and are not owned by
+the manager. The interface library sends credential batches through the
+Deploy Commander RPC bridge; the host applies the current manager scope and
+checks the manager's add or remove grant for each platform.
+
+#### Docker credential setup
+
+Use the platform name `docker` for Docker Hub and every other Docker registry,
+including GHCR. A Docker credential contains an `auth` object. For username and
+password authentication, use `kind: "basic"` inside `auth`; a registry token
+used as a password belongs in the `password` field.
+
+Add or replace Docker Hub and registry-prefix credentials in one call:
+
+```ts
+const added = await caller.addPlatformCredentials([
+  {
+    platform: "docker",
+    credential: {
+      kind: "docker_hub",
+      auth: {
+        kind: "basic",
+        username: "robot",
+        password: passwordFromSecureInput,
+      },
+    },
+  },
+  {
+    platform: "docker",
+    credential: {
+      kind: "prefix",
+      prefix: "ghcr.io/team",
+      auth: {
+        kind: "basic",
+        username: "robot",
+        password: tokenFromSecureInput,
+      },
+    },
+  },
+]);
+```
+
+For registries that issue a Docker identity token, `auth` can instead be
+`{ kind: "identity_token", token: tokenFromSecureInput }`. A Docker Hub
+credential is selected for image names without an explicit registry host, such
+as `alpine:latest` or `library/alpine:latest`. An image with a host, including
+`docker.io/library/alpine:latest`, uses the longest matching prefix credential;
+it does not fall back to the Docker Hub credential. A prefix can be a registry
+host (`ghcr.io`) or a host plus repository path (`ghcr.io/team`). Matching
+respects path boundaries, so `ghcr.io/team` does not match `ghcr.io/team2`.
+Prefixes must omit URL schemes and trailing slashes. Adding a credential again
+for the same Docker Hub scope or normalized prefix replaces its value.
+
+Remove either credential scope with `removePlatformCredentials` and its
+selector:
+
+```ts
+const removed = await caller.removePlatformCredentials([
+  {
+    platform: "docker",
+    selector: { kind: "docker_hub" },
+  },
+  {
+    platform: "docker",
+    selector: { kind: "prefix", prefix: "ghcr.io/team" },
+  },
+]);
+```
+
+Both methods return one ordered result for each submitted item. A result has an
+`index`, a `status` of `ok` or `error`, and an optional safe code such as
+`invalid_entry`, `unknown_platform`, `operation_failed`, or `forbidden`.
+Valid items continue after an invalid or denied item. Managers need separate
+add and remove grants for each exact platform name. Do not include a manager ID
+in the call; Deploy Commander injects the trusted current manager ID. These
+browser RPC methods use the logged-in interface session and manager grants,
+not the manager Basic/Bearer API. Never put credential values in interface
+metadata or publish configuration.
 
 ## Resources
 
@@ -862,9 +959,28 @@ Returns:
 ```ts
 {
   connection: ConnectionItem;
-  config: ConnectionConfiguration;
+  config: GetConnectionConfiguration;
 }
 ```
+
+`GetConnectionConfiguration` extends the stored connection configuration with
+these optional fields:
+
+```ts
+interface GetConnectionConfiguration extends ConnectionConfiguration {
+  platform_connection?: unknown;
+  public_connection?: {
+    address: string;
+    port: number;
+  };
+}
+```
+
+The descriptors are read live from the attached resource and appear under
+`config` only for a single-connection read. Each field is omitted independently
+when not configured. No resource object or resource metadata is exposed, and
+the descriptors are not copied into connection metadata. List, create, update,
+and delete contracts remain unchanged.
 
 This call only succeeds when:
 
@@ -959,12 +1075,7 @@ Before creating a connection, use `getConnections` with manager and resource fil
 Example:
 
 ```ts
-const existing = await caller.getConnections(
-  1,
-  0,
-  connectionOwningManagerId,
-  resourceId,
-);
+const existing = await caller.getConnections(1, 0, connectionOwningManagerId, resourceId);
 
 if (existing.total > 0) {
   throw new Error("A connection already exists for this manager and resource");
@@ -1359,9 +1470,7 @@ async function startApplication() {
 
   const caller = RPC.SetupRPCCaller(wire);
 
-  let tokenManager:
-    | Awaited<ReturnType<typeof Caller.generateTokenManager>>
-    | undefined;
+  let tokenManager: Awaited<ReturnType<typeof Caller.generateTokenManager>> | undefined;
 
   try {
     const managerId = await caller.getManager();
@@ -1400,11 +1509,7 @@ async function configureManager(
 
   const metadata = await caller.getMetadata();
 
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    typeof metadata.resourceId !== "string"
-  ) {
+  if (!metadata || typeof metadata !== "object" || typeof metadata.resourceId !== "string") {
     wire.close({
       manager: currentManager.id,
       ok: false,
@@ -1815,4 +1920,6 @@ Deploy Commander owns manager context and remains the final authorization bounda
 
 Prefer Deploy Commander’s native resources, connections, runs, history, labels, and lifecycle tooling before introducing additional persistence or custom infrastructure.
 
-Add manager-specific database state only when the existing platform primitives do not represent the requirement cleanly.
+Add manager-specific database state only when the existing platform primitives do not represent the requirement cleanly. If you are using the database ensure you check to see if the database is initialized and if not initialize it.
+
+Never require a manager frontend to perform an operation immediately after a run completes. Assume the manager interface is no longer open when the run finishes. Any required post-run work must be part of the durable run/backend workflow or be safely recoverable when the manager is opened again.
