@@ -244,6 +244,51 @@ describe('createPostgresConnection', () => {
     );
   });
 
+  it('waits for the created connection to become visible after the run completes', async () => {
+    const created = connection('connection-created', request.metadata.requestedAccess, {
+      team: 'payments',
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+    });
+    const { deps, caller } = createDeps();
+    caller.getConnections = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [created.item], limit: 50, offset: 0, total: 1 });
+    caller.getConnection = vi.fn().mockResolvedValue(details(created));
+
+    await expect(createPostgresConnection(deps, request)).resolves.toEqual(details(created));
+    expect(caller.getConnections).toHaveBeenCalledTimes(5);
+  });
+
+  it('reports when the new record is visible with incompatible settings', async () => {
+    const incompatible = connection('connection-created', request.metadata.requestedAccess, {
+      team: 'engineering',
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+    });
+    incompatible.username = `dc_user_${'c'.repeat(32)}`;
+    incompatible.metadata.username = incompatible.username;
+    const { deps, caller } = createDeps();
+    caller.getConnections = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({ items: [incompatible.item], limit: 50, offset: 0, total: 1 });
+    caller.getConnection = vi.fn().mockResolvedValue(details(incompatible));
+
+    await expect(createPostgresConnection(deps, request)).rejects.toMatchObject({
+      status: 500,
+      message: 'PostgreSQL connection was persisted with incompatible settings',
+    });
+  });
+
   it.each([
     ['database-not-found', 404],
     ['database-collision', 409],

@@ -21,6 +21,9 @@ import {
 } from '../platform/resources';
 import { RunFailedError, type RunProgress, type RunTracker } from '../platform/runTracker';
 
+const POST_RUN_PERSISTENCE_TIMEOUT_MS = 5_000;
+const POST_RUN_PERSISTENCE_POLL_MS = 250;
+
 export type CreateApprovalContext = {
   callingManagerId: string;
   requestedAccess: AccessRequest | null;
@@ -211,15 +214,25 @@ export async function createPostgresConnection(
     throw new PostgresRequestError(500, 'PostgreSQL connection creation failed');
   }
 
-  const completed = await listResourceConnections(deps.caller, refreshed.installation.resource.id);
-  const result = findCompatibleConnection(completed, {
-    managerId: request.callingManagerId,
-    resourceId: refreshed.installation.resource.id,
-    access,
-    labels: expectedLabels,
-  });
-  if (result.kind === 'match') return connectionResult(result.connection);
-  if (result.kind === 'conflict')
-    throw new PostgresRequestError(409, 'Multiple PostgreSQL connections match the request');
+  const persistenceDeadline = Date.now() + POST_RUN_PERSISTENCE_TIMEOUT_MS;
+  while (true) {
+    const completed = await listResourceConnections(deps.caller, refreshed.installation.resource.id);
+    const result = findCompatibleConnection(completed, {
+      managerId: request.callingManagerId,
+      resourceId: refreshed.installation.resource.id,
+      access,
+      labels: expectedLabels,
+    });
+    if (result.kind === 'match') return connectionResult(result.connection);
+    if (result.kind === 'conflict')
+      throw new PostgresRequestError(409, 'Multiple PostgreSQL connections match the request');
+    if (completed.some((connection) => connection.username === login.username))
+      throw new PostgresRequestError(
+        500,
+        'PostgreSQL connection was persisted with incompatible settings',
+      );
+    if (Date.now() >= persistenceDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, POST_RUN_PERSISTENCE_POLL_MS));
+  }
   throw new PostgresRequestError(500, 'PostgreSQL connection was not persisted');
 }
