@@ -1,7 +1,12 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeCaller } from '../test/fakes';
-import { listResourceConnections, readPostgresConnection } from './connections';
+import {
+  findCompatibleConnection,
+  listResourceConnections,
+  readPostgresConnection,
+  type PostgresConnection,
+} from './connections';
 
 const item = (id: string, overrides: Partial<RPC.ConnectionItem> = {}): RPC.ConnectionItem => ({
   id,
@@ -36,6 +41,59 @@ const details = (
       access,
     },
   },
+});
+
+const compatibleCandidate = (labels: Record<string, string>): PostgresConnection => ({
+  item: item('connection-1', { labels }),
+  managerId: 'consumer-1',
+  resourceId: 'resource-1',
+  authority: { access: 'database', database: 'orders', origin: 'managed' },
+  access: { scope: 'database', operation: 'create', database: 'orders' },
+  username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  password: 'connection-secret',
+  metadata: {
+    access: { scope: 'database', operation: 'create', database: 'orders' },
+    username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    password: 'connection-secret',
+  },
+});
+
+describe('findCompatibleConnection', () => {
+  it('accepts additional persisted labels when no caller labels were requested', () => {
+    const connection = compatibleCandidate({
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+      'platform.connection-id': 'connection-1',
+    });
+
+    expect(
+      findCompatibleConnection([connection], {
+        managerId: 'consumer-1',
+        resourceId: 'resource-1',
+        access: { scope: 'database', operation: 'create', database: 'orders' },
+        labels: {},
+      }),
+    ).toEqual({ kind: 'match', connection });
+  });
+
+  it('rejects a connection when a requested caller label has a different value', () => {
+    const connection = compatibleCandidate({
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+      team: 'engineering',
+    });
+
+    expect(
+      findCompatibleConnection([connection], {
+        managerId: 'consumer-1',
+        resourceId: 'resource-1',
+        access: { scope: 'database', operation: 'create', database: 'orders' },
+        labels: { team: 'payments' },
+      }),
+    ).toEqual({ kind: 'none' });
+  });
 });
 
 describe('listResourceConnections', () => {

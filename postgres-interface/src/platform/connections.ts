@@ -179,12 +179,7 @@ function callerLabels(item: RPC.ConnectionItem): Record<string, string> {
 }
 
 function sameLabels(actual: Record<string, string>, expected: Record<string, string>): boolean {
-  const actualKeys = Object.keys(actual);
-  const expectedKeys = Object.keys(expected);
-  return (
-    actualKeys.length === expectedKeys.length &&
-    expectedKeys.every((key) => actual[key] === expected[key])
-  );
+  return Object.entries(expected).every(([key, value]) => actual[key] === value);
 }
 
 export function findCompatibleConnection(

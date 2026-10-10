@@ -216,7 +216,10 @@ export async function createPostgresConnection(
 
   const persistenceDeadline = Date.now() + POST_RUN_PERSISTENCE_TIMEOUT_MS;
   while (true) {
-    const completed = await listResourceConnections(deps.caller, refreshed.installation.resource.id);
+    const completed = await listResourceConnections(
+      deps.caller,
+      refreshed.installation.resource.id,
+    );
     const result = findCompatibleConnection(completed, {
       managerId: request.callingManagerId,
       resourceId: refreshed.installation.resource.id,
