@@ -120,9 +120,9 @@ export async function readInstallation(
     metadata.secret_keys.length !== 2 ||
     !metadata.secret_keys.includes('USERNAME') ||
     !metadata.secret_keys.includes('PASSWORD') ||
-    Object.hasOwn(metadata, 'username') ||
-    Object.hasOwn(metadata, 'password') ||
-    Object.hasOwn(metadata, 'administrator')
+    Object.prototype.hasOwnProperty.call(metadata, 'username') ||
+    Object.prototype.hasOwnProperty.call(metadata, 'password') ||
+    Object.prototype.hasOwnProperty.call(metadata, 'administrator')
   ) {
     throw new PostgresRequestError(400, 'PostgreSQL resource configuration is invalid');
   }

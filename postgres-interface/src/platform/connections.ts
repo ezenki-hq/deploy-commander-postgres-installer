@@ -140,8 +140,8 @@ export async function readPostgresConnection(
     metadata.secret_keys.length !== 2 ||
     !metadata.secret_keys.includes('USERNAME') ||
     !metadata.secret_keys.includes('PASSWORD') ||
-    Object.hasOwn(metadata, 'username') ||
-    Object.hasOwn(metadata, 'password')
+    Object.prototype.hasOwnProperty.call(metadata, 'username') ||
+    Object.prototype.hasOwnProperty.call(metadata, 'password')
   )
     throw invalidConnection();
   await requireCredentialKeys(caller, 'connection', connection.id);

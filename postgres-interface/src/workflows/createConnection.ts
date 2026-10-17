@@ -15,8 +15,8 @@ import {
 } from '../platform/connections';
 import { buildProvisionPlan, RUNNER_IMAGE } from '../platform/plans';
 import {
-  loadInstallationProjection,
   readInstallation,
+  resolveOwnedPostgresResource,
   type PostgresInstallation,
 } from '../platform/resources';
 import { RunFailedError, type RunProgress, type RunTracker } from '../platform/runTracker';
@@ -55,16 +55,8 @@ function assertManagerId(value: unknown, label: string): asserts value is string
   }
 }
 
-function connectionResult(connection: PostgresConnection): RPC.CreateConnection {
-  return {
-    connection: connection.item,
-    config: {
-      id: connection.item.id,
-      manager: connection.managerId,
-      resource: connection.resourceId,
-      metadata: connection.metadata,
-    },
-  };
+function connectionResult(connection: PostgresConnection): { connection: RPC.ConnectionItem } {
+  return { connection: connection.item };
 }
 
 function sameIdentity(
@@ -72,8 +64,10 @@ function sameIdentity(
   access: AccessRequest,
   callerId: string,
   resourceId: string,
+  groupId?: string,
 ): boolean {
   if (connection.managerId !== callerId || connection.resourceId !== resourceId) return false;
+  if ((connection.item.labels?.custom_deployer_group_id ?? undefined) !== groupId) return false;
   if (access.scope === 'database') {
     return connection.access.scope === 'database' && connection.access.database === access.database;
   }
@@ -112,29 +106,30 @@ function signalFor(deps: CreateConnectionDeps): AbortSignal {
 async function installedState(
   caller: RPCCaller,
   currentManagerId: string,
+  resourceId: string,
 ): Promise<{ installation: PostgresInstallation; summaries: RPC.ConnectionItem[] }> {
-  const projection = await loadInstallationProjection(caller);
-  if (projection.kind === 'not-installed')
-    throw new PostgresRequestError(404, 'PostgreSQL is not installed');
-  if (projection.kind === 'conflict')
-    throw new PostgresRequestError(409, 'Multiple PostgreSQL resources exist');
-  if (projection.resource.manager !== currentManagerId)
-    throw new PostgresRequestError(400, 'PostgreSQL resource belongs to another manager');
-  const installation = await readInstallation(caller, projection.resource);
-  const summaries = await listResourceConnectionSummaries(caller, projection.resource.id);
+  const resource = await resolveOwnedPostgresResource(caller, currentManagerId, resourceId);
+  const installation = await readInstallation(caller, resource);
+  const summaries = await listResourceConnectionSummaries(caller, resource.id);
   return { installation, summaries };
 }
 
 export async function createPostgresConnection(
   deps: CreateConnectionDeps,
   request: CreateConnectionRequest,
-): Promise<RPC.CreateConnection> {
+): Promise<{ connection: RPC.ConnectionItem }> {
   assertManagerId(request.currentManagerId, 'current');
   assertManagerId(request.callingManagerId, 'calling');
   if (request.metadata.action !== 'create-connection')
     throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
+  if (typeof request.metadata.resourceId !== 'string' || request.metadata.resourceId.trim() === '')
+    throw new PostgresRequestError(400, 'PostgreSQL resource is required');
 
-  const initial = await installedState(deps.caller, request.currentManagerId);
+  const initial = await installedState(
+    deps.caller,
+    request.currentManagerId,
+    request.metadata.resourceId,
+  );
   const databaseNames = [
     ...new Set(
       initial.summaries
@@ -152,20 +147,26 @@ export async function createPostgresConnection(
     throw new PostgresRequestError(499, 'PostgreSQL connection approval was rejected');
 
   const access = decision.access;
-  const refreshed = await installedState(deps.caller, request.currentManagerId);
+  const refreshed = await installedState(
+    deps.caller,
+    request.currentManagerId,
+    request.metadata.resourceId,
+  );
   const peers = await listResourceConnections(deps.caller, refreshed.installation.resource.id);
   const origin = selectOrigin(access, peers);
   const expectedLabels = request.metadata.labels;
+  const groupId = expectedLabels.custom_deployer_group_id;
   const lookup = findCompatibleConnection(peers, {
     managerId: request.callingManagerId,
     resourceId: refreshed.installation.resource.id,
     access,
     labels: expectedLabels,
+    groupId,
   });
   if (lookup.kind === 'match') return connectionResult(lookup.connection);
   if (
     peers.some((peer) =>
-      sameIdentity(peer, access, request.callingManagerId, refreshed.installation.resource.id),
+      sameIdentity(peer, access, request.callingManagerId, refreshed.installation.resource.id, groupId),
     )
   ) {
     throw new PostgresRequestError(
@@ -178,6 +179,7 @@ export async function createPostgresConnection(
   const login: LoginCredentials = await generateLoginCredentials({
     callerId: request.callingManagerId,
     resourceId: refreshed.installation.resource.id,
+    groupId,
     access,
   });
   const databaseOwner =
@@ -192,7 +194,6 @@ export async function createPostgresConnection(
     callerId: request.callingManagerId,
     access,
     origin,
-    login,
     databaseOwner,
     callerLabels: expectedLabels,
   });
@@ -205,6 +206,7 @@ export async function createPostgresConnection(
         note: 'PostgreSQL connection provisioning',
         target: { kind: 'resource', id: refreshed.installation.resource.id },
         metadata: plan,
+        secrets: { USERNAME: login.username, PASSWORD: login.password },
       },
       deps.onProgress ?? (() => undefined),
       signalFor(deps),
@@ -225,11 +227,22 @@ export async function createPostgresConnection(
       resourceId: refreshed.installation.resource.id,
       access,
       labels: expectedLabels,
+      groupId,
     });
     if (result.kind === 'match') return connectionResult(result.connection);
     if (result.kind === 'conflict')
       throw new PostgresRequestError(409, 'Multiple PostgreSQL connections match the request');
-    if (completed.some((connection) => connection.username === login.username))
+    if (
+      completed.some((connection) =>
+        sameIdentity(
+          connection,
+          access,
+          request.callingManagerId,
+          refreshed.installation.resource.id,
+          groupId,
+        ),
+      )
+    )
       throw new PostgresRequestError(
         500,
         'PostgreSQL connection was persisted with incompatible settings',
