@@ -104,7 +104,7 @@ export async function listResourceConnectionSummaries(
     } catch {
       throw new PostgresRequestError(500, 'Unable to load PostgreSQL connections');
     }
-    if (!validPage(response, offset))
+    if (!validPage(response, offset) || response.items.some((item) => item.resource !== resourceId))
       throw new PostgresRequestError(500, 'Unable to load PostgreSQL connections');
     items.push(...response.items);
     if (response.items.length === 0 || offset + response.items.length >= response.total)

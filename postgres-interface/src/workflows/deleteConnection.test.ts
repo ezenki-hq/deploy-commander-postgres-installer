@@ -23,7 +23,6 @@ const resource: RPC.ResourceItem = {
 };
 const installation: PostgresInstallation = {
   resource,
-  administrator: { username: `dc_admin_${'a'.repeat(32)}`, password: 'admin-secret' },
 };
 const explicitRequest = {
   currentManagerId: 'postgres-manager',
@@ -68,12 +67,9 @@ const target = (
       ? { access: 'database', database: targetAccess.database, origin: 'managed' }
       : { access: 'full' },
   access: targetAccess,
-  username: `dc_user_${'b'.repeat(32)}`,
-  password: 'connection-secret',
   metadata: {
     access: targetAccess,
-    username: `dc_user_${'b'.repeat(32)}`,
-    password: 'connection-secret',
+    secret_keys: ['USERNAME', 'PASSWORD'],
   },
 });
 const details = (connection: PostgresConnection): RPC.GetConnection => ({
@@ -112,7 +108,7 @@ function createDeps(
         metadata: {
           engine: 'postgres',
           version: '15',
-          administrator: installation.administrator,
+          secret_keys: ['USERNAME', 'PASSWORD'],
         },
       },
     }),
@@ -131,6 +127,7 @@ function createDeps(
           ? Promise.resolve(details(found))
           : Promise.reject(new Error('404'));
     }),
+    getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
     start: vi.fn(),
     deleteConnection: vi.fn(),
   } as unknown as DeleteConnectionDeps['caller'];
@@ -190,8 +187,34 @@ describe('deletePostgresConnection', () => {
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
 
+  it('rejects imported and foreign-resource targets before approval', async () => {
+    const imported = target('imported', 'other-manager', access, {
+      ...labels,
+      custom_deployer_connection_origin: 'imported',
+      custom_deployer_group_id: 'group-a',
+    });
+    const importedDeps = createDeps([imported]);
+    await expect(deletePostgresConnection(importedDeps.deps, {
+      ...explicitRequest,
+      metadata: { action: 'delete-connection', connectionIds: ['imported'] },
+    })).rejects.toMatchObject({ status: 409 });
+    expect(importedDeps.approval).not.toHaveBeenCalled();
+    expect(importedDeps.deps.runTracker.startAndWait).not.toHaveBeenCalled();
+
+    const foreign = target('foreign');
+    foreign.item.resource = 'resource-foreign';
+    foreign.resourceId = 'resource-foreign';
+    const foreignDeps = createDeps([foreign]);
+    await expect(deletePostgresConnection(foreignDeps.deps, {
+      ...explicitRequest,
+      metadata: { action: 'delete-connection', connectionIds: ['foreign'] },
+    })).rejects.toMatchObject({ status: 500 });
+    expect(foreignDeps.approval).not.toHaveBeenCalled();
+    expect(foreignDeps.deps.runTracker.startAndWait).not.toHaveBeenCalled();
+  });
+
   it('approves every requested connection and starts one runner for the batch', async () => {
-    const first = target('connection-1');
+    const first = target('connection-1', 'another-manager');
     const second = target('connection-2');
     let active = [first, second];
     const { deps, caller, approval } = createDeps(active);
@@ -381,6 +404,23 @@ describe('deletePostgresConnection', () => {
     gate.resolve({ allowed: true, connectionId: subject.item.id });
     await expect(pending).rejects.toMatchObject({ status: 409 });
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
+  });
+
+  it('fails before cleanup when copied secret keys disappear after approval', async () => {
+    const gate = deferred<DeleteApprovalDecision>();
+    const secretCase = createDeps([target()], {
+      requestApproval: vi.fn(() => gate.promise),
+    });
+    let secretLookup = 0;
+    secretCase.caller.getSecretKeys = vi.fn(async () => {
+      secretLookup += 1;
+      return secretLookup >= 4 ? ['USERNAME'] : ['USERNAME', 'PASSWORD'];
+    });
+    const pending = deletePostgresConnection(secretCase.deps, explicitRequest);
+    await vi.waitFor(() => expect(secretCase.approval).toHaveBeenCalledOnce());
+    gate.resolve({ allowed: true, connectionId: 'target' });
+    await expect(pending).rejects.toMatchObject({ status: 400 });
+    expect(secretCase.deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
 
   it('rejects malformed labels and never drops the database', async () => {
