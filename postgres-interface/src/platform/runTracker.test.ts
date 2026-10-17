@@ -54,10 +54,15 @@ const runUpdateEvent = (data: {
   id: string;
   status: number;
   seq?: number;
+  phase?: string;
+  message?: string;
 }): Events.InterfaceEvent => ({
   type: 'event',
   eventType: 'run-update',
-  data: { type: 'event', payload: { ...data, run_id: data.id, phase: 'run' } },
+  data: {
+    type: 'event',
+    payload: { ...data, run_id: data.id, phase: data.phase ?? 'run' },
+  },
 });
 
 const runLogEvent = (data: {
@@ -111,7 +116,7 @@ it('ignores unrelated and duplicate events', async () => {
   events.publish(runUpdateEvent({ id: 'run-1', status: STATUS_RUNNING, seq: 4 }));
   events.publish(runUpdateEvent({ id: 'run-1', status: STATUS_DONE, seq: 5 }));
   await waiting;
-  expect(progress.filter((value) => value.phase === 'running')).toHaveLength(1);
+  expect(progress.map((value) => value.phase)).toEqual(['starting', 'queued', 'running', 'done']);
   expect(progress.some((value) => value.runId === 'run-2')).toBe(false);
   tracker.dispose();
 });
@@ -137,8 +142,10 @@ it('fails when run-start and start response IDs disagree', async () => {
   tracker.dispose();
 });
 
-it('uses exact getRun for a known run when a terminal live event is missed', async () => {
+it('shows the latest structured event and checks status every five minutes without ending an active run', async () => {
   vi.useFakeTimers();
+  const progress: RunProgress[] = [];
+  const runEvents = testEventSource();
   const caller = fakeCaller({
     start: vi
       .fn()
@@ -146,19 +153,134 @@ it('uses exact getRun for a known run when a terminal live event is missed', asy
     getRun: vi
       .fn()
       .mockResolvedValueOnce(runningRun('run-1'))
+      .mockResolvedValueOnce(runningRun('run-1'))
       .mockResolvedValueOnce(doneRun('run-1')),
   });
-  const tracker = createRunTracker(caller, events);
-  const waiting = tracker.startAndWait(
-    startOptions('note-1'),
-    vi.fn(),
-    new AbortController().signal,
+  const tracker = createRunTracker(caller, runEvents);
+  let completed = false;
+  const waiting = tracker
+    .startAndWait(
+      startOptions('note-1'),
+      (value) => progress.push(value),
+      new AbortController().signal,
+    )
+    .then((result) => {
+      completed = true;
+      return result;
+    });
+  runEvents.publish(runStartEvent({ id: 'run-1', action: 'create-connection', note: 'note-1' }));
+  runEvents.publish(
+    runUpdateEvent({
+      id: 'run-1',
+      status: STATUS_RUNNING,
+      seq: 1,
+      phase: 'provision',
+      message: 'Creating PostgreSQL service',
+    }),
   );
-  await vi.advanceTimersByTimeAsync(2_000);
+  expect(progress[progress.length - 1]).toMatchObject({
+    phase: 'running',
+    runId: 'run-1',
+    lastEvent: { phase: 'provision', message: 'Creating PostgreSQL service' },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
+  expect(caller.getRun).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(caller.getRun).toHaveBeenCalledTimes(1);
+  expect(completed).toBe(false);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+  expect(caller.getRun).toHaveBeenCalledTimes(2);
+  expect(completed).toBe(false);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(caller.getRun).toHaveBeenCalledTimes(3);
+  expect(progress[progress.length - 1]).toMatchObject({ phase: 'done', runId: 'run-1' });
+  expect(completed).toBe(true);
   await expect(waiting).resolves.toEqual(doneRun('run-1'));
   expect(caller.getRun).toHaveBeenCalledWith('run-1');
   tracker.dispose();
   vi.useRealTimers();
+});
+
+it('applies run updates received before the start response identifies the run', async () => {
+  const progress: RunProgress[] = [];
+  const runEvents = testEventSource();
+  const started = deferred<{ id: string; queued_at: string; status: number }>();
+  const caller = fakeCaller({ start: vi.fn(() => started.promise) });
+  const tracker = createRunTracker(caller, runEvents);
+  const controller = new AbortController();
+  const waiting = tracker.startAndWait(
+    startOptions('note-1'),
+    (value) => progress.push(value),
+    controller.signal,
+  );
+  runEvents.publish(
+    runUpdateEvent({
+      id: 'run-1',
+      status: STATUS_RUNNING,
+      seq: 1,
+      phase: 'provision',
+      message: 'Creating PostgreSQL service',
+    }),
+  );
+  started.resolve({ id: 'run-1', queued_at: '2026-09-20T00:00:00Z', status: STATUS_RUNNING });
+  await started.promise;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(progress[progress.length - 1]).toMatchObject({
+    phase: 'running',
+    runId: 'run-1',
+    lastEvent: { phase: 'provision', message: 'Creating PostgreSQL service' },
+  });
+  controller.abort();
+  tracker.dispose();
+  await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+});
+
+it('keeps an older out-of-order event from replacing the latest event', async () => {
+  const progress: RunProgress[] = [];
+  const runEvents = testEventSource();
+  const caller = fakeCaller({
+    start: vi.fn().mockResolvedValue({
+      id: 'run-1',
+      queued_at: '2026-09-20T00:00:00Z',
+      status: STATUS_RUNNING,
+    }),
+  });
+  const controller = new AbortController();
+  const tracker = createRunTracker(caller, runEvents);
+  const waiting = tracker.startAndWait(
+    startOptions('note-1'),
+    (value) => progress.push(value),
+    controller.signal,
+  );
+  runEvents.publish(runStartEvent({ id: 'run-1', action: 'create-connection', note: 'note-1' }));
+  runEvents.publish(
+    runUpdateEvent({
+      id: 'run-1',
+      status: STATUS_RUNNING,
+      seq: 2,
+      phase: 'provision',
+      message: 'Latest event',
+    }),
+  );
+  runEvents.publish(
+    runUpdateEvent({
+      id: 'run-1',
+      status: STATUS_RUNNING,
+      seq: 1,
+      phase: 'prepare',
+      message: 'Older event',
+    }),
+  );
+  expect(progress[progress.length - 1]).toMatchObject({
+    lastEvent: { phase: 'provision', message: 'Latest event' },
+  });
+  controller.abort();
+  tracker.dispose();
+  await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
 });
 
 it('continues from a matching run-start when the start response is lost', async () => {

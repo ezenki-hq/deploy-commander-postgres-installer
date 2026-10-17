@@ -13,8 +13,12 @@ export function ProgressPanel({ progress }: { progress: RunProgress }) {
       className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-indigo-950 shadow-sm"
     >
       <h2 className="text-sm font-semibold">{text} PostgreSQL operation</h2>
-      {'message' in progress && progress.message && (
-        <p className="mt-1 text-sm text-indigo-800">{progress.message}</p>
+      {'lastEvent' in progress && progress.lastEvent && (
+        <p className="mt-1 text-sm text-indigo-800">
+          <span className="font-semibold">Last event: </span>
+          {progress.lastEvent.phase && <span>{progress.lastEvent.phase}: </span>}
+          {progress.lastEvent.message ?? 'Run event received'}
+        </p>
       )}
     </section>
   );
