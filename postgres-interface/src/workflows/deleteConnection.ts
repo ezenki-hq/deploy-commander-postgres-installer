@@ -70,8 +70,11 @@ function fingerprint(connection: PostgresConnection): string {
     labels: connection.item.labels,
     authority: connection.authority,
     access: connection.access,
-    username: connection.username,
   });
+}
+
+function peerSetFingerprint(connections: PostgresConnection[]): string {
+  return connections.map(fingerprint).sort().join('\n');
 }
 
 function choiceFor(connection: PostgresConnection, peers: PostgresConnection[]): DeleteChoice {
@@ -135,12 +138,14 @@ async function deleteBatchPostgresConnections(
 ): Promise<string[]> {
   const initial = await installed(deps.caller, request.currentManagerId);
   const requested = requestedIds.map((id) => {
-    const target = initial.connections.find(
-      (connection) =>
-        connection.item.id === id && connection.managerId === request.callingManagerId,
-    );
+    const target = initial.connections.find((connection) => connection.item.id === id);
     if (!target)
       throw new PostgresRequestError(404, 'A requested PostgreSQL connection was not found');
+    if (target.item.labels?.custom_deployer_connection_origin === 'imported')
+      throw new PostgresRequestError(
+        409,
+        'Imported PostgreSQL connections must be unlinked, not deleted',
+      );
     return target;
   });
   const requestedSet = new Set(requestedIds);
@@ -164,10 +169,11 @@ async function deleteBatchPostgresConnections(
   }
 
   const refreshed = await installed(deps.caller, request.currentManagerId);
+  if (peerSetFingerprint(refreshed.connections) !== peerSetFingerprint(initial.connections))
+    throw new PostgresRequestError(409, 'The PostgreSQL connection set changed after approval');
   const targets = requested.map((before, index) => {
     const target = refreshed.connections.find(
-      (connection) =>
-        connection.item.id === before.item.id && connection.managerId === request.callingManagerId,
+      (connection) => connection.item.id === before.item.id,
     );
     if (!target || fingerprint(target) !== fingerprint(before))
       throw new PostgresRequestError(409, 'The PostgreSQL connection changed after approval');
@@ -233,8 +239,23 @@ async function deleteOnePostgresConnection(
 ): Promise<string> {
   const initial = await installed(deps.caller, request.currentManagerId);
   const owned = initial.connections.filter(
-    (connection) => connection.managerId === request.callingManagerId,
+    (connection) =>
+      connection.managerId === request.callingManagerId &&
+      connection.item.labels?.custom_deployer_connection_origin !== 'imported',
   );
+  if (
+    requested &&
+    initial.connections.some(
+      (connection) =>
+        connection.item.id === requested &&
+        connection.item.labels?.custom_deployer_connection_origin === 'imported',
+    )
+  ) {
+    throw new PostgresRequestError(
+      409,
+      'Imported PostgreSQL connections must be unlinked, not deleted',
+    );
+  }
   if (requested && !owned.some((connection) => connection.item.id === requested)) {
     throw new PostgresRequestError(404, 'PostgreSQL connection was not found');
   }
@@ -255,6 +276,8 @@ async function deleteOnePostgresConnection(
     );
 
   const refreshed = await installed(deps.caller, request.currentManagerId);
+  if (peerSetFingerprint(refreshed.connections) !== peerSetFingerprint(initial.connections))
+    throw new PostgresRequestError(409, 'The PostgreSQL connection set changed after approval');
   const target = refreshed.connections.find(
     (connection) =>
       connection.item.id === decision.connectionId &&

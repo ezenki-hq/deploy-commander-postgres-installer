@@ -18,7 +18,7 @@
     "deploy": "npm run build && npm run publish:manager"
   },
   "dependencies": {
-    "@ezenki/deploy-commander-installer-interface": "^0.6.0",
+    "@ezenki/deploy-commander-installer-interface": "^0.7.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

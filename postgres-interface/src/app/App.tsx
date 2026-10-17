@@ -7,7 +7,12 @@ import { ModalDialog } from '../components/ModalDialog';
 import { ProgressPanel } from '../components/ProgressPanel';
 import { TeardownDialog } from '../components/TeardownDialog';
 import { ActionButton } from '../components/ActionButton';
-import { parseCreateRequest, parseDeleteRequest } from '../domain/requests';
+import {
+  parseCreateRequest,
+  parseDeleteRequest,
+  parseLinkRequest,
+  parseUnlinkRequest,
+} from '../domain/requests';
 import { PostgresRequestError } from '../domain/errors';
 import { createInterfaceClient, type InterfaceClient } from '../platform/interfaceClient';
 import { loadDashboardProjection, type DashboardProjection } from '../platform/dashboardProjection';
@@ -25,10 +30,13 @@ import {
 } from '../workflows/deleteConnection';
 import { installPostgres, teardownPostgres, type LifecycleDeps } from '../workflows/lifecycle';
 import { useDecisionController } from './useDecisionController';
+import { linkPostgresConnection, unlinkPostgresConnection } from '../workflows/groupConnection';
 
 export interface AppServices {
   createConnection: typeof createPostgresConnection;
   deleteConnection: typeof deletePostgresConnection;
+  linkConnection: typeof linkPostgresConnection;
+  unlinkConnection: typeof unlinkPostgresConnection;
   install: typeof installPostgres;
   teardown: typeof teardownPostgres;
 }
@@ -146,6 +154,8 @@ export default function App({
     () => ({
       createConnection: createPostgresConnection,
       deleteConnection: deletePostgresConnection,
+      linkConnection: linkPostgresConnection,
+      unlinkConnection: unlinkPostgresConnection,
       install: installPostgres,
       teardown: teardownPostgres,
     }),
@@ -278,6 +288,20 @@ export default function App({
             callingManagerId,
             metadata: parsed,
           });
+          client.wire.close({ manager: boot.managerId, ok: true, result });
+        } else if (metadata.action === 'link-connection') {
+          const result = await appServices.linkConnection(
+            client.caller,
+            boot.managerId,
+            parseLinkRequest(metadata),
+          );
+          client.wire.close({ manager: boot.managerId, ok: true, result });
+        } else if (metadata.action === 'unlink-connection') {
+          const result = await appServices.unlinkConnection(
+            client.caller,
+            boot.managerId,
+            parseUnlinkRequest(metadata),
+          );
           client.wire.close({ manager: boot.managerId, ok: true, result });
         } else {
           throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');

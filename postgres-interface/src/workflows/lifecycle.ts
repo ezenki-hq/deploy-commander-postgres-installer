@@ -2,7 +2,11 @@ import type { RPCCaller, StartRunOptions } from '@ezenki/deploy-commander-instal
 import { generateAdminCredentials, type AdminCredentials } from '../domain/credentials';
 import { PostgresRequestError } from '../domain/errors';
 import { buildInstallPlan, buildTeardownPlan, RUNNER_IMAGE } from '../platform/plans';
-import { loadInstallationProjection, type InstallationProjection } from '../platform/resources';
+import {
+  loadInstallationProjection,
+  readInstallation,
+  type InstallationProjection,
+} from '../platform/resources';
 import type { RunProgress, RunTracker } from '../platform/runTracker';
 
 export type LifecycleDeps = {
@@ -38,11 +42,16 @@ export async function installPostgres(deps: LifecycleDeps): Promise<Installation
   const options: StartRunOptions = {
     action: 'create',
     runner: RUNNER_IMAGE,
-    metadata: buildInstallPlan(administrator),
+    metadata: buildInstallPlan(),
+    secrets: { USERNAME: administrator.username, PASSWORD: administrator.password },
     note: 'PostgreSQL installation',
   };
   await deps.runTracker.startAndWait(options, deps.onProgress, deps.signal);
-  return reload(deps);
+  const refreshed = await reload(deps);
+  if (refreshed.kind !== 'installed')
+    throw new PostgresRequestError(500, 'PostgreSQL installation was not persisted');
+  await readInstallation(deps.caller, refreshed.resource);
+  return refreshed;
 }
 
 export async function teardownPostgres(deps: LifecycleDeps): Promise<InstallationProjection> {

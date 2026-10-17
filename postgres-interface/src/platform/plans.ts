@@ -1,4 +1,3 @@
-import type { LoginCredentials } from '../domain/credentials';
 import { connectionLabels, type DatabaseOrigin, type DeletionEffect } from '../domain/labels';
 import type { AccessRequest } from '../domain/requests';
 import type { PostgresConnection } from './connections';
@@ -17,6 +16,7 @@ type RunnerService = {
   command?: string[];
   connections?: Array<{ type: 'Platform'; data: { network: string } }>;
   resources?: Array<Record<string, unknown>>;
+  secrets?: string[];
   volumes?: Array<{ name: string; mount_path: string }>;
   health_check?: {
     test: string[];
@@ -34,11 +34,13 @@ type ConnectionCreate = {
   resource: { id: string };
   metadata: Record<string, unknown>;
   labels: Record<string, string>;
+  secrets?: string[];
 };
 
 type ConnectionRemove = { name: string; id: string; resource: { id: string } };
 
 export type RunnerMetadata = {
+  values_version?: 1;
   services?: Record<string, RunnerService>;
   volumes?: string[];
   connections?: { create?: ConnectionCreate[]; remove?: ConnectionRemove[] };
@@ -253,8 +255,8 @@ function adminEnvironment(installation: PostgresInstallation): Record<string, st
     PGHOST: 'postgres',
     PGPORT: '5432',
     PGDATABASE: 'postgres',
-    PGUSER: installation.administrator.username,
-    PGPASSWORD: installation.administrator.password,
+    PGUSER: `[[secret:resource:${installation.resource.id}:USERNAME]]`,
+    PGPASSWORD: `[[secret:resource:${installation.resource.id}:PASSWORD]]`,
     PGCONNECT_TIMEOUT: '5',
   };
 }
@@ -273,16 +275,11 @@ function adminService(
   };
 }
 
-function loginEnvironment(
-  installation: PostgresInstallation,
-  login: LoginCredentials,
-  database: string,
-  databaseOwner?: string,
-): Record<string, string> {
+function loginEnvironment(database: string, databaseOwner?: string): Record<string, string> {
   return {
     TARGET_DATABASE: database,
-    TARGET_USERNAME: login.username,
-    TARGET_PASSWORD: login.password,
+    TARGET_USERNAME: '[[secret:run:USERNAME]]',
+    TARGET_PASSWORD: '[[secret:run:PASSWORD]]',
     ...(databaseOwner ? { DATABASE_OWNER: databaseOwner } : {}),
   };
 }
@@ -293,25 +290,19 @@ function accessScript(access: AccessRequest): string {
   return access.superuser ? SUPERUSER_SCRIPT : CONSTRAINED_FULL_SCRIPT;
 }
 
-function connectionMetadata(
-  login: LoginCredentials,
-  access: AccessRequest,
-): Record<string, unknown> {
+function connectionMetadata(access: AccessRequest): Record<string, unknown> {
   return {
     host: 'postgres',
     port: 5432,
     database: access.scope === 'database' ? access.database : 'postgres',
-    username: login.username,
-    password: login.password,
+    secret_keys: ['USERNAME', 'PASSWORD'],
     access,
   };
 }
 
-export function buildInstallPlan(administrator: {
-  username: string;
-  password: string;
-}): RunnerMetadata {
+export function buildInstallPlan(): RunnerMetadata {
   return {
+    values_version: 1,
     services: {
       postgres: {
         image: POSTGRES_IMAGE,
@@ -329,15 +320,16 @@ export function buildInstallPlan(administrator: {
           wait_timeout_seconds: 300,
         },
         environment: {
-          POSTGRES_USER: administrator.username,
-          POSTGRES_PASSWORD: administrator.password,
+          POSTGRES_USER: '[[secret:run:USERNAME]]',
+          POSTGRES_PASSWORD: '[[secret:run:PASSWORD]]',
           POSTGRES_DB: 'postgres',
         },
         resources: [
           {
             resource_type: 'postgres',
             name: 'postgres',
-            metadata: { engine: 'postgres', version: '15', administrator },
+            metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
+            secrets: ['USERNAME', 'PASSWORD'],
           },
         ],
         volumes: [{ name: 'postgres-data', mount_path: '/var/lib/postgresql/data' }],
@@ -356,7 +348,6 @@ export function buildProvisionPlan(input: {
   callerId: string;
   access: AccessRequest;
   origin?: DatabaseOrigin;
-  login: LoginCredentials;
   databaseOwner?: string;
   callerLabels: Record<string, string>;
 }): RunnerMetadata {
@@ -365,10 +356,11 @@ export function buildProvisionPlan(input: {
     throw new Error('Database owner is required');
   const labels = connectionLabels(input.access, input.callerLabels, input.origin);
   return {
+    values_version: 1,
     services: {
       'postgres-admin': adminService(
         input.installation,
-        loginEnvironment(input.installation, input.login, database, input.databaseOwner),
+        loginEnvironment(database, input.databaseOwner),
         accessScript(input.access),
       ),
     },
@@ -378,8 +370,9 @@ export function buildProvisionPlan(input: {
           name: 'postgres-connection',
           manager: input.callerId,
           resource: { id: input.installation.resource.id },
-          metadata: connectionMetadata(input.login, input.access),
+          metadata: connectionMetadata(input.access),
           labels,
+          secrets: ['USERNAME', 'PASSWORD'],
         },
       ],
     },
@@ -401,15 +394,14 @@ export function buildDeletePlan(input: {
     throw new Error('Managed database owner is required');
   }
   return {
+    values_version: 1,
     services: {
       'postgres-admin': adminService(
         input.installation,
-        loginEnvironment(
-          input.installation,
-          { username: input.target.username, password: input.target.password },
-          database,
-          input.databaseOwner,
-        ),
+        {
+          ...loginEnvironment(database, input.databaseOwner),
+          TARGET_USERNAME: `[[secret:connection:${input.target.item.id}:USERNAME]]`,
+        },
         input.effect === 'role-and-database' ? DATABASE_CLEANUP_SCRIPT : ROLE_CLEANUP_SCRIPT,
       ),
     },
@@ -452,7 +444,7 @@ export function buildBatchDeletePlan(input: {
 
     const database =
       target.authority.access === 'database' ? target.authority.database : 'postgres';
-    environment[`TARGET_USERNAME_${index}`] = target.username;
+    environment[`TARGET_USERNAME_${index}`] = `[[secret:connection:${target.item.id}:USERNAME]]`;
     environment[`TARGET_DATABASE_${index}`] = database;
     environment[`DATABASE_OWNER_${index}`] = databaseOwner ?? '';
     steps.push(
@@ -469,6 +461,7 @@ export function buildBatchDeletePlan(input: {
   });
 
   return {
+    values_version: 1,
     services: {
       'postgres-admin': adminService(
         input.installation,

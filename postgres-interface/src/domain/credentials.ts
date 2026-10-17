@@ -13,6 +13,7 @@ export type LoginCredentials = {
 export type LoginIdentity = {
   callerId: string;
   resourceId: string;
+  groupId?: string;
   access: AccessRequest;
 };
 
@@ -52,11 +53,9 @@ export function generateAdminCredentials(): AdminCredentials {
 }
 
 export async function generateLoginCredentials(identity: LoginIdentity): Promise<LoginCredentials> {
-  const suffix = await identityDigest([
-    identity.callerId,
-    identity.resourceId,
-    accessIdentity(identity.access),
-  ]);
+  const identityParts = [identity.callerId, identity.resourceId, accessIdentity(identity.access)];
+  if (identity.groupId !== undefined) identityParts.push(identity.groupId);
+  const suffix = await identityDigest(identityParts);
   return {
     username: `dc_user_${suffix}`,
     password: randomHex(32),

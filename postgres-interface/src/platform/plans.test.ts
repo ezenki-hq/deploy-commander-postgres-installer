@@ -19,11 +19,6 @@ import {
   buildTeardownPlan,
 } from './plans';
 
-const administrator = {
-  username: `dc_admin_${'a'.repeat(32)}`,
-  password: 'secret-value-that-is-long-enough',
-};
-
 const installation: PostgresInstallation = {
   resource: {
     id: 'resource-1',
@@ -35,7 +30,6 @@ const installation: PostgresInstallation = {
     created_at: '2026-09-20T00:00:00Z',
     updated_at: '2026-09-20T00:00:00Z',
   },
-  administrator,
 };
 
 const target = {
@@ -56,13 +50,13 @@ const target = {
   resourceId: 'resource-1',
   authority: { access: 'database', database: 'orders', origin: 'managed' as const },
   access: { scope: 'database' as const, operation: 'create' as const, database: 'orders' },
-  username: `dc_user_${'b'.repeat(32)}`,
-  password: 'connection-secret',
   metadata: {},
 } satisfies PostgresConnection;
 
-it('builds one stable postgres service, volume, and resource', () => {
-  expect(buildInstallPlan(administrator)).toEqual({
+it('builds a versioned secret-backed postgres service, volume, and resource', () => {
+  const plan = buildInstallPlan();
+  expect(plan).toMatchObject({
+    values_version: 1,
     services: {
       postgres: {
         image: 'postgres:15',
@@ -80,15 +74,16 @@ it('builds one stable postgres service, volume, and resource', () => {
           wait_timeout_seconds: 300,
         },
         environment: {
-          POSTGRES_USER: administrator.username,
-          POSTGRES_PASSWORD: administrator.password,
+          POSTGRES_USER: '[[secret:run:USERNAME]]',
+          POSTGRES_PASSWORD: '[[secret:run:PASSWORD]]',
           POSTGRES_DB: 'postgres',
         },
         resources: [
           {
             resource_type: 'postgres',
             name: 'postgres',
-            metadata: { engine: 'postgres', version: '15', administrator },
+            metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
+            secrets: ['USERNAME', 'PASSWORD'],
           },
         ],
         volumes: [{ name: 'postgres-data', mount_path: '/var/lib/postgresql/data' }],
@@ -96,6 +91,7 @@ it('builds one stable postgres service, volume, and resource', () => {
     },
     volumes: ['postgres-data'],
   });
+  expect(JSON.stringify(plan)).not.toMatch(/dc_admin_|secret-value/);
 });
 
 it('uses the runner teardown action without guessed removals', () => {
@@ -108,7 +104,6 @@ it('runs psql before creating the labeled connection record', () => {
     callerId: 'consumer-1',
     access: { scope: 'database', operation: 'create', database: 'orders' },
     origin: 'managed',
-    login: { username: `dc_user_${'b'.repeat(32)}`, password: 'connection-secret' },
     databaseOwner: `dc_db_${'c'.repeat(32)}`,
     callerLabels: { team: 'payments' },
   });
@@ -132,14 +127,23 @@ it('runs psql before creating the labeled connection record', () => {
       },
     }),
   ]);
+  expect(plan).toMatchObject({ values_version: 1 });
+  expect(plan.services!['postgres-admin'].environment).toMatchObject({
+    PGUSER: '[[secret:resource:resource-1:USERNAME]]',
+    PGPASSWORD: '[[secret:resource:resource-1:PASSWORD]]',
+    TARGET_USERNAME: '[[secret:run:USERNAME]]',
+    TARGET_PASSWORD: '[[secret:run:PASSWORD]]',
+  });
+  expect(plan.connections!.create![0]).toMatchObject({ secrets: ['USERNAME', 'PASSWORD'] });
   expect(plan.connections!.create![0].metadata).toMatchObject({
     host: 'postgres',
     port: 5432,
     database: 'orders',
-    username: `dc_user_${'b'.repeat(32)}`,
-    password: 'connection-secret',
+    secret_keys: ['USERNAME', 'PASSWORD'],
     access: { scope: 'database', operation: 'create', database: 'orders' },
   });
+  expect(JSON.stringify(plan)).not.toContain('connection-secret');
+  expect(JSON.stringify(plan)).not.toContain('dc_user_');
   expect(plan.connections!.create![0].metadata).not.toHaveProperty('platform_connection');
   expect(JSON.stringify(plan)).not.toContain('object_hooks');
 });
@@ -201,7 +205,6 @@ it.each([
     callerId: 'consumer-1',
     access,
     origin: access.scope === 'database' ? 'existing' : undefined,
-    login: { username: `dc_user_${'b'.repeat(32)}`, password: 'connection-secret' },
     databaseOwner: access.scope === 'database' ? `dc_db_${'c'.repeat(32)}` : undefined,
     callerLabels: {},
   });
@@ -230,6 +233,7 @@ it('drops a final managed database through its deterministic owner role', () => 
   });
   expect(plan.services!['postgres-admin'].environment).toMatchObject({
     TARGET_DATABASE: 'orders',
+    TARGET_USERNAME: '[[secret:connection:connection-1:USERNAME]]',
     DATABASE_OWNER: `dc_db_${'c'.repeat(32)}`,
   });
   expect(plan.connections!.remove![0]).toEqual({
@@ -243,7 +247,6 @@ it('builds one runner plan with ordered cleanups and removals for a batch', () =
   const second = {
     ...target,
     item: { ...target.item, id: 'connection-2' },
-    username: `dc_user_${'c'.repeat(32)}`,
   };
   const owner = `dc_db_${'d'.repeat(32)}`;
   const plan = buildBatchDeletePlan({
@@ -257,8 +260,8 @@ it('builds one runner plan with ordered cleanups and removals for a batch', () =
   const command = service.command?.[2] ?? '';
   expect(Object.keys(plan.services ?? {})).toEqual(['postgres-admin']);
   expect(service.environment).toMatchObject({
-    TARGET_USERNAME_0: target.username,
-    TARGET_USERNAME_1: second.username,
+    TARGET_USERNAME_0: '[[secret:connection:connection-1:USERNAME]]',
+    TARGET_USERNAME_1: '[[secret:connection:connection-2:USERNAME]]',
     TARGET_DATABASE_0: 'orders',
     TARGET_DATABASE_1: 'orders',
     DATABASE_OWNER_1: owner,
@@ -269,7 +272,7 @@ it('builds one runner plan with ordered cleanups and removals for a batch', () =
   );
   expect(command).toContain('\\getenv target_username TARGET_USERNAME');
   expect(command).toContain('DROP DATABASE');
-  expect(command).not.toContain(target.username);
+  expect(command).not.toContain('dc_user_');
   expect(() => execFileSync('sh', ['-n', '-c', command])).not.toThrow();
   expect(plan.connections?.remove).toEqual([
     {

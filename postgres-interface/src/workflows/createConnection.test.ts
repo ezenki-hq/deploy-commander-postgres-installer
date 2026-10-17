@@ -4,7 +4,6 @@ import { PostgresRequestError } from '../domain/errors';
 import type { LoginCredentials } from '../domain/credentials';
 import type { AccessRequest } from '../domain/requests';
 import type { PostgresConnection } from '../platform/connections';
-import type { PostgresInstallation } from '../platform/resources';
 import { RunFailedError } from '../platform/runTracker';
 import { deferred, fakeCaller } from '../test/fakes';
 import {
@@ -23,15 +22,12 @@ const resource: RPC.ResourceItem = {
   created_at: '2026-09-20T00:00:00Z',
   updated_at: '2026-09-20T00:00:00Z',
 };
-const installation: PostgresInstallation = {
-  resource,
-  administrator: { username: `dc_admin_${'a'.repeat(32)}`, password: 'admin-secret' },
-};
 const request = {
   currentManagerId: 'postgres-manager',
   callingManagerId: 'consumer-1',
   metadata: {
     action: 'create-connection' as const,
+    resourceId: 'resource-1',
     requestedAccess: {
       scope: 'database' as const,
       operation: 'create' as const,
@@ -72,12 +68,9 @@ const connection = (
       ? { access: 'database', database: access.database, origin: 'managed' }
       : { access: 'full' },
   access,
-  username: `dc_user_${'b'.repeat(32)}`,
-  password: 'connection-secret',
   metadata: {
     access,
-    username: `dc_user_${'b'.repeat(32)}`,
-    password: 'connection-secret',
+    secret_keys: ['USERNAME', 'PASSWORD'],
   },
 });
 const details = (item: PostgresConnection): RPC.GetConnection => ({
@@ -107,7 +100,7 @@ function createDeps(overrides: Partial<CreateConnectionDeps> = {}) {
         agent: 'agent-1',
         resource_type: 'postgres',
         name: 'postgres',
-        metadata: { engine: 'postgres', version: '15', administrator: installation.administrator },
+        metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
       },
     }),
     getConnections: vi.fn().mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 }),
@@ -159,28 +152,33 @@ describe('createPostgresConnection', () => {
     const pending = createPostgresConnection(deps, request);
     await vi.waitFor(() => expect(approval).toHaveBeenCalledOnce());
     gate.resolve({ allowed: true, access: request.metadata.requestedAccess });
-    await expect(pending).resolves.toEqual(details(existing));
+    await expect(pending).resolves.toEqual({ connection: existing.item });
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
 
-  it('returns concrete errors for missing and conflicting resources', async () => {
+  it('rejects a missing or mismatched requested resource before approval', async () => {
     const missing = createDeps();
-    missing.caller.getMyResources = vi
-      .fn()
-      .mockResolvedValue({ items: [], limit: 50, offset: 0, total: 0 });
+    missing.caller.getResource = vi.fn().mockRejectedValue(new Error('not found'));
     await expect(createPostgresConnection(missing.deps, request)).rejects.toMatchObject({
-      status: 404,
+      status: 400,
     });
-    const conflict = createDeps();
-    conflict.caller.getMyResources = vi.fn().mockResolvedValue({
-      items: [resource, { ...resource, id: 'resource-2' }],
-      limit: 50,
-      offset: 0,
-      total: 2,
+    const wrongResource = createDeps();
+    const wrongRequest = {
+      ...request,
+      metadata: { ...request.metadata, resourceId: 'resource-2' },
+    };
+    await expect(createPostgresConnection(wrongResource.deps, wrongRequest)).rejects.toMatchObject({
+      status: 400,
     });
-    await expect(createPostgresConnection(conflict.deps, request)).rejects.toMatchObject({
-      status: 409,
-    });
+    expect(wrongResource.approval).not.toHaveBeenCalled();
+  });
+
+  it('requires both resource secret keys before approval', async () => {
+    const { deps, approval } = createDeps();
+    deps.caller.getSecretKeys = vi.fn().mockResolvedValue([{ key: 'USERNAME' }]);
+    await expect(createPostgresConnection(deps, request)).rejects.toMatchObject({ status: 400 });
+    expect(approval).not.toHaveBeenCalled();
+    expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
 
   it('passes labels-only requests through the approval decision', async () => {
@@ -188,6 +186,7 @@ describe('createPostgresConnection', () => {
       ...request,
       metadata: {
         action: 'create-connection' as const,
+        resourceId: 'resource-1',
         requestedAccess: null,
         labels: { team: 'payments' },
       },
@@ -231,17 +230,86 @@ describe('createPostgresConnection', () => {
       .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
       .mockResolvedValueOnce({ items: [created.item], limit: 50, offset: 0, total: 1 });
     caller.getConnection = vi.fn().mockResolvedValue(details(created));
-    await expect(createPostgresConnection(deps, request)).resolves.toEqual(details(created));
+    await expect(createPostgresConnection(deps, request)).resolves.toEqual({
+      connection: created.item,
+    });
     expect(deps.runTracker.startAndWait).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'create-connection',
         runner: 'ezenki/deploy-commander-runner:latest',
         target: { kind: 'resource', id: 'resource-1' },
         note: expect.not.stringContaining('new-secret'),
+        secrets: { USERNAME: `dc_user_${'c'.repeat(32)}`, PASSWORD: 'new-secret' },
       }),
       expect.any(Function),
       expect.any(AbortSignal),
     );
+  });
+
+  it('creates a distinct group-scoped login when another group has the same access', async () => {
+    const groupRequest = {
+      ...request,
+      metadata: {
+        ...request.metadata,
+        labels: {
+          team: 'payments',
+          custom_deployer_group_id: 'group-a',
+          custom_deployer_connection_origin: 'created',
+        },
+      },
+    };
+    const otherGroup = connection('connection-b', request.metadata.requestedAccess, {
+      team: 'payments',
+      custom_deployer_group_id: 'group-b',
+      custom_deployer_connection_origin: 'created',
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+    });
+    const { deps, caller } = createDeps();
+    caller.getConnections = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [otherGroup.item], limit: 50, offset: 0, total: 1 })
+      .mockResolvedValueOnce({ items: [otherGroup.item], limit: 50, offset: 0, total: 1 })
+      .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
+      .mockResolvedValueOnce({
+        items: [
+          connection('connection-a', request.metadata.requestedAccess, {
+            team: 'payments',
+            custom_deployer_group_id: 'group-a',
+            custom_deployer_connection_origin: 'created',
+            'postgres.access': 'database',
+            'postgres.database': 'orders',
+            'postgres.database-origin': 'managed',
+          }).item,
+        ],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      });
+    caller.getConnection = vi.fn((id: string) =>
+      Promise.resolve(
+        details(
+          id === 'connection-b'
+            ? otherGroup
+            : connection('connection-a', request.metadata.requestedAccess, {
+                team: 'payments',
+                custom_deployer_group_id: 'group-a',
+                custom_deployer_connection_origin: 'created',
+                'postgres.access': 'database',
+                'postgres.database': 'orders',
+                'postgres.database-origin': 'managed',
+              }),
+        ),
+      ),
+    );
+    await expect(createPostgresConnection(deps, groupRequest)).resolves.toMatchObject({
+      connection: { id: 'connection-a' },
+    });
+    expect(deps.generateLoginCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 'group-a' }),
+    );
+    expect(deps.runTracker.startAndWait).toHaveBeenCalledOnce();
   });
 
   it('waits for the created connection to become visible after the run completes', async () => {
@@ -261,7 +329,9 @@ describe('createPostgresConnection', () => {
       .mockResolvedValueOnce({ items: [created.item], limit: 50, offset: 0, total: 1 });
     caller.getConnection = vi.fn().mockResolvedValue(details(created));
 
-    await expect(createPostgresConnection(deps, request)).resolves.toEqual(details(created));
+    await expect(createPostgresConnection(deps, request)).resolves.toEqual({
+      connection: created.item,
+    });
     expect(caller.getConnections).toHaveBeenCalledTimes(5);
   });
 
@@ -272,8 +342,6 @@ describe('createPostgresConnection', () => {
       'postgres.database': 'orders',
       'postgres.database-origin': 'managed',
     });
-    incompatible.username = `dc_user_${'c'.repeat(32)}`;
-    incompatible.metadata.username = incompatible.username;
     const { deps, caller } = createDeps();
     caller.getConnections = vi
       .fn()

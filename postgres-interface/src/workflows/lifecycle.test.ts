@@ -20,7 +20,19 @@ const administrator = { username: `dc_admin_${'a'.repeat(32)}`, password: 'admin
 
 function lifecycleDeps(overrides: Partial<LifecycleDeps> = {}) {
   const projection: InstallationProjection = { kind: 'not-installed' };
-  const caller = fakeCaller();
+  const caller = fakeCaller({
+    getResource: vi.fn().mockResolvedValue({
+      resource,
+      config: {
+        id: resource.id,
+        manager: resource.manager,
+        agent: 'agent-1',
+        resource_type: 'postgres',
+        name: 'postgres',
+        metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
+      },
+    }),
+  });
   const reloadProjection = vi.fn(async () => projection);
   const onProgress = vi.fn();
   const requestConfirmation = vi.fn(async () => true);
@@ -50,10 +62,16 @@ function lifecycleDeps(overrides: Partial<LifecycleDeps> = {}) {
 describe('installPostgres', () => {
   it('starts installation directly when the resource is absent', async () => {
     const { deps, requestConfirmation, onProgress } = lifecycleDeps();
-    await expect(installPostgres(deps)).resolves.toEqual({ kind: 'not-installed' });
+    const installed: InstallationProjection = { kind: 'installed', resource };
+    deps.reloadProjection = vi.fn(async () => installed);
+    await expect(installPostgres(deps)).resolves.toEqual(installed);
     expect(requestConfirmation).not.toHaveBeenCalled();
     expect(deps.runTracker.startAndWait).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'create', metadata: buildInstallPlan(administrator) }),
+      expect.objectContaining({
+        action: 'create',
+        metadata: buildInstallPlan(),
+        secrets: { USERNAME: administrator.username, PASSWORD: administrator.password },
+      }),
       onProgress,
       deps.signal,
     );

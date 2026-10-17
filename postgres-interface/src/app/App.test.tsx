@@ -176,10 +176,49 @@ describe('root App', () => {
 });
 
 describe('child App approval and failure states', () => {
+  it.each([
+    ['link-connection', 'linkConnection'],
+    ['unlink-connection', 'unlinkConnection'],
+  ] as const)('dispatches %s through the group workflow', async (action, serviceName) => {
+    const client = childClient({
+      action,
+      resource: 'resource-1',
+      connection: 'connection-1',
+      ...(action === 'link-connection'
+        ? {
+            labels: {
+              custom_deployer_group_id: 'group-a',
+              custom_deployer_connection_origin: 'imported',
+            },
+          }
+        : { group: 'group-a' }),
+    });
+    const result = { connection: { id: 'connection-1' } };
+    const services = appServices({
+      [serviceName]: vi.fn().mockResolvedValue(result),
+    } as Partial<AppServices>);
+    render(<App client={client} services={services} />);
+    await waitFor(() =>
+      expect(services[serviceName]).toHaveBeenCalledWith(
+        client.caller,
+        'postgres-manager',
+        expect.objectContaining({ action }),
+      ),
+    );
+    await waitFor(() =>
+      expect(client.wire.close).toHaveBeenCalledWith({
+        manager: 'postgres-manager',
+        ok: true,
+        result,
+      }),
+    );
+  });
+
   it('renders create approval before progress and starts nothing before Approve', async () => {
     const completion = deferred<RPC.CreateConnection>();
     const client = childClient({
       action: 'create-connection',
+      resource: 'resource-1',
       scope: 'database',
       operation: 'create',
       database: 'orders',
@@ -242,7 +281,10 @@ describe('child App approval and failure states', () => {
   it.each(['create-connection', 'delete-connection'] as const)(
     'rejects %s with 499 and zero starts',
     async (action) => {
-      const client = childClient({ action });
+      const client = childClient({
+        action,
+        ...(action === 'create-connection' ? { resource: 'resource-1' } : {}),
+      });
       const services = appServices({
         createConnection:
           action === 'create-connection'
@@ -281,7 +323,7 @@ describe('child App approval and failure states', () => {
   );
 
   it('shows a preflight failure dialog before closing the child request', async () => {
-    const client = childClient({ action: 'create-connection' });
+    const client = childClient({ action: 'create-connection', resource: 'resource-1' });
     render(
       <App
         client={client}
@@ -359,7 +401,7 @@ describe('child App approval and failure states', () => {
   });
 
   it('sanitizes unknown child errors', async () => {
-    const client = childClient({ action: 'create-connection' });
+    const client = childClient({ action: 'create-connection', resource: 'resource-1' });
     render(
       <App
         client={client}
@@ -383,7 +425,7 @@ describe('child App approval and failure states', () => {
   });
 
   it('disposes and resolves a pending approval on unmount', async () => {
-    const client = childClient({ action: 'create-connection' });
+    const client = childClient({ action: 'create-connection', resource: 'resource-1' });
     const services = appServices({
       createConnection: vi.fn(async (deps) => {
         const decision = await deps.requestApproval(createContext);

@@ -36,8 +36,7 @@ const details = (
       host: 'postgres',
       port: 5432,
       database: access.scope === 'database' ? access.database : 'postgres',
-      username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      password: 'connection-secret',
+      secret_keys: ['USERNAME', 'PASSWORD'],
       access,
     },
   },
@@ -49,12 +48,9 @@ const compatibleCandidate = (labels: Record<string, string>): PostgresConnection
   resourceId: 'resource-1',
   authority: { access: 'database', database: 'orders', origin: 'managed' },
   access: { scope: 'database', operation: 'create', database: 'orders' },
-  username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-  password: 'connection-secret',
   metadata: {
     access: { scope: 'database', operation: 'create', database: 'orders' },
-    username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    password: 'connection-secret',
+    secret_keys: ['USERNAME', 'PASSWORD'],
   },
 });
 
@@ -73,6 +69,7 @@ describe('findCompatibleConnection', () => {
         resourceId: 'resource-1',
         access: { scope: 'database', operation: 'create', database: 'orders' },
         labels: {},
+        groupId: undefined,
       }),
     ).toEqual({ kind: 'match', connection });
   });
@@ -91,6 +88,25 @@ describe('findCompatibleConnection', () => {
         resourceId: 'resource-1',
         access: { scope: 'database', operation: 'create', database: 'orders' },
         labels: { team: 'payments' },
+        groupId: undefined,
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('does not reuse a connection from another group with the same access', () => {
+    const connection = compatibleCandidate({
+      'postgres.access': 'database',
+      'postgres.database': 'orders',
+      'postgres.database-origin': 'managed',
+      custom_deployer_group_id: 'group-b',
+    });
+    expect(
+      findCompatibleConnection([connection], {
+        managerId: 'consumer-1',
+        resourceId: 'resource-1',
+        access: { scope: 'database', operation: 'create', database: 'orders' },
+        labels: {},
+        groupId: 'group-a',
       }),
     ).toEqual({ kind: 'none' });
   });
@@ -108,6 +124,7 @@ describe('listResourceConnections', () => {
       getConnection: vi.fn((id: string) =>
         Promise.resolve(details(id === finalPeer.id ? finalPeer : item(id))),
       ),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
     });
     const connections = await listResourceConnections(caller, 'resource-1');
     expect(connections).toHaveLength(51);
@@ -123,16 +140,20 @@ describe('listResourceConnections', () => {
 describe('readPostgresConnection', () => {
   it('parses database connection authority and metadata', async () => {
     const connection = item('connection-1');
-    const caller = fakeCaller({ getConnection: vi.fn().mockResolvedValue(details(connection)) });
+    const caller = fakeCaller({
+      getConnection: vi.fn().mockResolvedValue(details(connection)),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
+    });
     const result = await readPostgresConnection(caller, connection);
     expect(result).toMatchObject({
       managerId: 'consumer-1',
       resourceId: 'resource-1',
       authority: { access: 'database', database: 'orders', origin: 'managed' },
       access: { scope: 'database', operation: 'create', database: 'orders' },
-      username: 'dc_user_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      password: 'connection-secret',
+      metadata: { secret_keys: ['USERNAME', 'PASSWORD'] },
     });
+    expect(result).not.toHaveProperty('username');
+    expect(result).not.toHaveProperty('password');
     expect(result).not.toHaveProperty('platformConnection');
   });
 
@@ -141,6 +162,23 @@ describe('readPostgresConnection', () => {
       labels: { 'postgres.access': 'full', 'postgres.database': 'orders' },
     });
     const caller = fakeCaller({ getConnection: vi.fn().mockResolvedValue(details(connection)) });
+    await expect(readPostgresConnection(caller, connection)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('rejects credential values in public connection metadata', async () => {
+    const connection = item('connection-1');
+    const caller = fakeCaller({
+      getConnection: vi.fn().mockResolvedValue({
+        ...details(connection),
+        config: {
+          ...details(connection).config,
+          metadata: {
+            ...details(connection).config.metadata,
+            username: 'sensitive',
+          },
+        },
+      }),
+    });
     await expect(readPostgresConnection(caller, connection)).rejects.toMatchObject({ status: 409 });
   });
 });
