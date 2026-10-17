@@ -2,7 +2,6 @@ import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccessRequest } from '../domain/requests';
 import type { PostgresConnection } from '../platform/connections';
-import type { PostgresInstallation } from '../platform/resources';
 import { deferred } from '../test/fakes';
 import type {
   DeleteApprovalContext,
@@ -20,9 +19,6 @@ const resource: RPC.ResourceItem = {
   external: false,
   created_at: '2026-09-20T00:00:00Z',
   updated_at: '2026-09-20T00:00:00Z',
-};
-const installation: PostgresInstallation = {
-  resource,
 };
 const explicitRequest = {
   currentManagerId: 'postgres-manager',
@@ -127,7 +123,10 @@ function createDeps(
           ? Promise.resolve(details(found))
           : Promise.reject(new Error('404'));
     }),
-    getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+    getSecretKeys: vi.fn().mockResolvedValue([
+      { key: 'USERNAME', created_at: 'now', updated_at: 'now' },
+      { key: 'PASSWORD', created_at: 'now', updated_at: 'now' },
+    ]),
     start: vi.fn(),
     deleteConnection: vi.fn(),
   } as unknown as DeleteConnectionDeps['caller'];
@@ -194,10 +193,12 @@ describe('deletePostgresConnection', () => {
       custom_deployer_group_id: 'group-a',
     });
     const importedDeps = createDeps([imported]);
-    await expect(deletePostgresConnection(importedDeps.deps, {
-      ...explicitRequest,
-      metadata: { action: 'delete-connection', connectionIds: ['imported'] },
-    })).rejects.toMatchObject({ status: 409 });
+    await expect(
+      deletePostgresConnection(importedDeps.deps, {
+        ...explicitRequest,
+        metadata: { action: 'delete-connection', connectionIds: ['imported'] },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
     expect(importedDeps.approval).not.toHaveBeenCalled();
     expect(importedDeps.deps.runTracker.startAndWait).not.toHaveBeenCalled();
 
@@ -205,12 +206,31 @@ describe('deletePostgresConnection', () => {
     foreign.item.resource = 'resource-foreign';
     foreign.resourceId = 'resource-foreign';
     const foreignDeps = createDeps([foreign]);
-    await expect(deletePostgresConnection(foreignDeps.deps, {
-      ...explicitRequest,
-      metadata: { action: 'delete-connection', connectionIds: ['foreign'] },
-    })).rejects.toMatchObject({ status: 500 });
+    await expect(
+      deletePostgresConnection(foreignDeps.deps, {
+        ...explicitRequest,
+        metadata: { action: 'delete-connection', connectionIds: ['foreign'] },
+      }),
+    ).rejects.toMatchObject({ status: 500 });
     expect(foreignDeps.approval).not.toHaveBeenCalled();
     expect(foreignDeps.deps.runTracker.startAndWait).not.toHaveBeenCalled();
+  });
+
+  it('rejects deleting an imported connection by a single explicit ID', async () => {
+    const imported = target('imported', 'consumer-1', access, {
+      ...labels,
+      custom_deployer_connection_origin: 'imported',
+      custom_deployer_group_id: 'group-a',
+    });
+    const { deps, approval } = createDeps([imported]);
+    await expect(
+      deletePostgresConnection(deps, {
+        ...explicitRequest,
+        metadata: { action: 'delete-connection', connectionId: 'imported' },
+      }),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(approval).not.toHaveBeenCalled();
+    expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
   });
 
   it('approves every requested connection and starts one runner for the batch', async () => {
@@ -414,7 +434,9 @@ describe('deletePostgresConnection', () => {
     let secretLookup = 0;
     secretCase.caller.getSecretKeys = vi.fn(async () => {
       secretLookup += 1;
-      return secretLookup >= 4 ? ['USERNAME'] : ['USERNAME', 'PASSWORD'];
+      const username = { key: 'USERNAME', created_at: 'now', updated_at: 'now' };
+      const password = { key: 'PASSWORD', created_at: 'now', updated_at: 'now' };
+      return secretLookup >= 4 ? [username] : [username, password];
     });
     const pending = deletePostgresConnection(secretCase.deps, explicitRequest);
     await vi.waitFor(() => expect(secretCase.approval).toHaveBeenCalledOnce());

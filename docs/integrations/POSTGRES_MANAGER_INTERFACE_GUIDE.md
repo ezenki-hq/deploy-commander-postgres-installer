@@ -1,35 +1,31 @@
 # PostgreSQL Manager Interface Guide
 
-This is the public child-interface contract for the PostgreSQL manager. The manager derives
-durable state only from its Deploy Commander PostgreSQL resource and the connections attached
-to that resource. Run events report transient progress; they are not durable state.
+This guide defines the PostgreSQL manager's child-interface contract. The manager derives
+state from its PostgreSQL resource and the connections attached to that resource. Run events
+report transient progress; completed runs are not a source of truth.
 
 ## Prerequisites
 
-An existing PostgreSQL resource is required before a connection request can succeed. The
-manager never installs PostgreSQL as a side effect of a connection request. A user installs it
-from the manager dashboard; clicking Install is the approval for that installation. The
-consuming manager needs only the PostgreSQL manager ID and the standard installer interface
-wire. Caller and resource IDs are supplied by Deploy Commander and must not be placed in
-request metadata.
+Install PostgreSQL from the manager dashboard before requesting a connection. Every request
+that creates, links, or unlinks a connection names the PostgreSQL `resource` it targets. The
+manager verifies that the resource is the exact non-external `postgres` resource owned by the
+current manager. Caller and manager identities come from Deploy Commander, not request
+metadata.
+
+The runner must support the Deploy Commander values contract, including `values_version: 1`,
+`[[secret:run:KEY]]`, `[[secret:resource:UUID:KEY]]`, and
+`[[secret:connection:UUID:KEY]]` references and secret-copy lists. Deploy with a runner image
+that implements these values before using this manager.
 
 ## Create a connection
 
-Open the PostgreSQL manager as a child interface with a flat metadata object. Every request,
-including an exact reuse of an existing connection, displays an approval dialog. Rejection
-closes the child with status `499`; there is no remembered approval.
-
-Choose access in the dialog without supplying caller labels:
-
-```json
-{ "action": "create-connection" }
-```
-
-Create a new named database:
+Each create request requires approval, including reuse of an exact existing connection. A
+rejected or cancelled approval closes the child with status `499`.
 
 ```json
 {
   "action": "create-connection",
+  "resource": "postgres-resource-id",
   "scope": "database",
   "operation": "create",
   "database": "orders",
@@ -37,77 +33,37 @@ Create a new named database:
 }
 ```
 
-Use an existing database:
+Other supported access requests are:
+
+```json
+{ "action": "create-connection", "resource": "postgres-resource-id" }
+{ "action": "create-connection", "resource": "postgres-resource-id", "scope": "database", "operation": "existing", "database": "warehouse" }
+{ "action": "create-connection", "resource": "postgres-resource-id", "scope": "full" }
+{ "action": "create-connection", "resource": "postgres-resource-id", "scope": "full", "superuser": true }
+```
+
+When `scope` is `full`, omitting `superuser` means constrained access. Database access requires
+`operation` (`create` or `existing`) and a database name. Names must be non-empty, contain no
+NUL, not be `template0` or `template1`, and fit within 63 UTF-8 bytes. Callers may pass unrelated
+string labels but may not set the reserved `postgres.*` labels.
+
+For group-created connections, include both labels below. They are added to the connection
+alongside any caller labels:
 
 ```json
 {
-  "action": "create-connection",
-  "scope": "database",
-  "operation": "existing",
-  "database": "warehouse"
+  "custom_deployer_group_id": "group-id",
+  "custom_deployer_connection_origin": "created"
 }
 ```
 
-Constrained full access:
+The manager reuses a compatible connection only when its resource, caller, access, caller
+labels, and exact group membership match. A connection from another group is never reused.
 
-```json
-{ "action": "create-connection", "scope": "full" }
-```
+### Create result
 
-For full access, omitting `superuser` defaults it to `false`.
-
-Dedicated PostgreSQL superuser access:
-
-```json
-{ "action": "create-connection", "scope": "full", "superuser": true }
-```
-
-`superuser`, `database`, and `labels` are optional request fields. Callers may omit `labels`; the
-manager still adds its reserved access labels to the connection. Database-scoped access requires
-`operation` and `database`; full access ignores database-scoped fields. The parser ignores unknown
-fields and fields unused by the selected scope. When supplied, labels must have string values.
-Database names must be non-empty, contain no NUL, not be `template0` or `template1`, and fit within
-63 UTF-8 bytes.
-
-The three labels reserved for the manager are:
-
-| Label                      | Meaning                                            |
-| -------------------------- | -------------------------------------------------- |
-| `postgres.access`          | `database` or `full`                               |
-| `postgres.database`        | Database name for database-scoped access           |
-| `postgres.database-origin` | `managed` or `existing` for database-scoped access |
-
-Callers may supply other string labels, but may not supply or override any reserved label.
-
-Start and await the child in the normal way:
-
-```ts
-import type { RPC, Wire } from '@ezenki/deploy-commander-installer-interface';
-
-export async function requestPostgresConnection(
-  wire: Wire,
-  postgresManagerId: string,
-  metadata: Record<string, unknown>,
-): Promise<RPC.CreateConnection> {
-  const child = await wire.startInterface({ manager: postgresManagerId, metadata });
-  const response = await child.close;
-  if (!response.ok) {
-    const error = new Error(response.error?.message ?? 'PostgreSQL connection request failed');
-    Object.assign(error, { status: response.error?.status });
-    throw error;
-  }
-  return response.result as RPC.CreateConnection;
-}
-```
-
-After approval, the manager refreshes the resource and connections. Exactly one compatible
-connection may be reused. An ambiguous or incompatible identity returns `409`; no arbitrary
-connection is selected. A new connection is provisioned by an idempotent runner plan and the
-manager returns only after the connection record is visible.
-
-## Successful create result
-
-`child.close` contains an `InterfaceResponse` equivalent to:
+A successful child response contains the authoritative connection item only. It does not return
+connection config or secret values:
 
 ```ts
 {
@@ -124,78 +80,107 @@ manager returns only after the connection record is visible.
         'postgres.access': 'database',
         'postgres.database': 'orders',
         'postgres.database-origin': 'managed',
+        custom_deployer_group_id: 'group-id',
+        custom_deployer_connection_origin: 'created',
       },
       created_at: string,
       updated_at: string,
-    },
-    config: {
-      id: string,
-      manager: callingManagerId,
-      resource: postgresResourceId,
-      metadata: {
-        host: 'postgres',
-        port: 5432,
-        database: 'orders',
-        username: string,
-        password: string,
-        access: { scope: 'database', operation: 'create', database: 'orders' },
-      },
     },
   },
 }
 ```
 
-For full access, `metadata.database` is `postgres`; `metadata.access` remains the authority
-for constrained versus superuser access. The returned metadata contains the logical PostgreSQL
-connection details only; treat it, especially the password, as a secret.
+## Link and unlink a connection
+
+Link and unlink requests are scoped to an exact resource and connection. They do not show an
+extra approval dialog. Deploy Commander must open the manager with the trusted manager identity;
+never put a manager ID in metadata.
+
+Link an existing compatible connection into a group:
+
+```json
+{
+  "action": "link-connection",
+  "resource": "postgres-resource-id",
+  "connection": "connection-id",
+  "labels": {
+    "custom_deployer_group_id": "group-id",
+    "custom_deployer_connection_origin": "imported"
+  }
+}
+```
+
+Unlink an imported group connection:
+
+```json
+{
+  "action": "unlink-connection",
+  "resource": "postgres-resource-id",
+  "connection": "connection-id",
+  "group": "group-id"
+}
+```
+
+The manager may link a connection owned by a different manager when that connection is attached
+to the exact requested PostgreSQL resource. It preserves unrelated labels and the PostgreSQL
+access labels. Link marks the connection `imported` before adding group membership. Unlink
+removes group membership before removing the `imported` origin. These orders allow a retry to
+complete safely if one label update fails.
+
+A successful link or unlink returns `{ "connection": ConnectionItem }` with fresh labels.
+Created connections have origin `created` and cannot be unlinked. Unlinking removes group
+membership only; it does not delete the connection, login, database, or PostgreSQL role.
+
+## Credentials and secret metadata
+
+Administrator and connection credentials are Deploy Commander secrets. They are not stored in
+resource or connection metadata, runner metadata, labels, logs, or child results. Resource and
+connection metadata contain only the public declaration:
+
+```json
+{ "secret_keys": ["USERNAME", "PASSWORD"] }
+```
+
+The runner copies the install run's `USERNAME` and `PASSWORD` into the new resource, and copies
+provision run secrets into a created connection. Plans refer to values using runner secret
+references, for example:
+
+```text
+[[secret:run:USERNAME]]
+[[secret:resource:postgres-resource-id:PASSWORD]]
+[[secret:connection:connection-id:USERNAME]]
+```
+
+The manager verifies the presence of both key names with `getSecretKeys`; it never reads their
+stored values back. No migration is required: this manager has not been released and the prior
+metadata format is not treated as supported input.
 
 ## Delete a connection
 
-Delete one of the calling manager's connections:
+Delete a connection owned by the calling manager, or let the user choose one of that manager's
+connections:
 
 ```json
-{ "action": "delete-connection", "connection": "connection-1" }
-```
-
-Or let the user select from that manager's connections:
-
-```json
+{ "action": "delete-connection", "connection": "connection-id" }
 { "action": "delete-connection" }
 ```
 
-Delete several of the calling manager's connections in one request:
+An explicit array can request several connections attached to the manager's PostgreSQL
+resource:
 
 ```json
 { "action": "delete-connection", "connections": ["connection-1", "connection-2"] }
 ```
 
-Every deletion requires explicit confirmation. The manager refreshes the selected connection
-and its peers after approval; a changed target or changed cleanup consequence returns `409`
-before a run starts. For an array request, the manager validates and confirms every ID, then
-starts one runner run. That run performs cleanup in array order and submits all connection
-removals together after cleanup succeeds. If cleanup fails, Deploy Commander keeps the
-connection records; PostgreSQL changes made by earlier cleanup steps may already have occurred.
-A successful single-ID request closes with the deleted ID:
+Every deletion requires approval. The chooser lists only connections owned by the calling
+manager. An explicit array is checked against the exact PostgreSQL resource regardless of each
+connection's owner. The manager rejects the entire array before approval or cleanup if any ID is
+missing from that resource or has origin `imported`; unlink imported connections instead. It
+refreshes targets, secret-key declarations, labels, and peer state after approval and returns
+`409` if any changed. An array runs one ordered cleanup plan and removes records only after all
+cleanup steps succeed.
 
-```json
-{
-  "manager": "postgres-manager-id",
-  "ok": true,
-  "result": { "connection": "connection-1" }
-}
-```
-
-A successful array request closes with all deleted IDs:
-
-```json
-{
-  "manager": "postgres-manager-id",
-  "ok": true,
-  "result": { "connections": ["connection-1", "connection-2"] }
-}
-```
-
-Cleanup finishes before the runner removes the Deploy Commander connection record:
+Cleanup effects are:
 
 | Connection                        | PostgreSQL effect                                                                           |
 | --------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -204,45 +189,33 @@ Cleanup finishes before the runner removes the Deploy Commander connection recor
 | Full, constrained                 | Delete its login; preserve all databases.                                                   |
 | Full, superuser                   | Delete its login; preserve all databases.                                                   |
 
-The `postgres.database-origin=managed` label is the authority for database ownership. A
-database is never removed because a name happens to match; only the final labeled connection
-to a manager-created database can remove it. All other deletions remove only the generated
-login and connection.
-
-An `operation: "existing"` request for a database that already has a manager-created labeled
-connection inherits `postgres.database-origin=managed`; otherwise it is labeled `existing`.
-
-## Resource and connection authority
-
-Installation state is the exact non-external resource named `postgres` and typed `postgres`.
-Multiple such resources are a `409` conflict. Logical access is the set of connections on that
-resource, including their reserved labels and returned metadata. Completed runs are not state.
-
-The manager uses run-start and run-update events, followed by an exact run read, to show
-starting, queued, running, completed, and failed progress. PostgreSQL operations are safe to
-retry using the current resource and connection projections; no historical run is treated as a
-source of truth.
+The `postgres.database-origin=managed` label is the authority for database ownership. A name
+match alone never authorizes database removal.
 
 ## Failure contract
 
 Failures close the child with `ok: false` and a normalized status:
 
-| Status | Meaning                                                                                                |
-| ------ | ------------------------------------------------------------------------------------------------------ |
-| `400`  | Invalid request metadata, caller context, or approved access.                                          |
-| `404`  | PostgreSQL is not installed, the selected connection is absent, or an existing database was not found. |
-| `409`  | Resource conflict, identity/label conflict, malformed labels, or an approval-time race.                |
-| `499`  | The user rejected or cancelled approval.                                                               |
-| `500`  | Provisioning, cleanup, persistence, or run tracking failed.                                            |
+| Status | Meaning                                                                       |
+| ------ | ----------------------------------------------------------------------------- |
+| `400`  | Invalid request, resource ownership mismatch, or missing required secret key. |
+| `404`  | PostgreSQL is not installed, or a selected connection/database is absent.     |
+| `409`  | Resource, identity, group label, or approval-time conflict.                   |
+| `499`  | The user rejected or cancelled a create or delete approval.                   |
+| `500`  | Provisioning, label update, cleanup, persistence, or run tracking failed.     |
 
-Messages never contain passwords, SQL output, or runner logs. Consumers should show the
-normalized message and retry only after the underlying resource or connection state changes.
+Messages do not contain passwords, SQL output, or runner logs. Retry after the underlying
+resource or connection state changes; link/unlink can also be retried to finish a partial label
+update.
 
 ## Consumer checklist
 
-- Require the manager dashboard to install PostgreSQL before requesting a connection.
-- Send one of the supported flat request objects and keep identities and credentials out of metadata.
-- Expect an approval decision for every create and delete request, including exact reuse.
-- Await `child.close`, handle statuses `400`, `404`, `409`, `499`, and `500`, and treat `499` as a user decision.
-- Use the returned `RPC.CreateConnection` metadata as sensitive configuration.
-- Derive all durable decisions from the current resource and connection records.
+- Install PostgreSQL from the dashboard and use a values-capable runner image.
+- Include the exact `resource` on create, link, and unlink requests.
+- Keep credentials and manager identities out of metadata.
+- Set both group labels for group-created connections; link imported connections with origin
+  `imported`.
+- Await `child.close`; create and delete require approval, while link and unlink do not.
+- Treat `USERNAME` and `PASSWORD` as secrets and use the connection item returned by create,
+  link, or unlink as the public result.
+- Derive durable state from the current resource and connection records.

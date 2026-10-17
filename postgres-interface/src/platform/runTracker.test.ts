@@ -57,7 +57,7 @@ const runUpdateEvent = (data: {
 }): Events.InterfaceEvent => ({
   type: 'event',
   eventType: 'run-update',
-  data: { type: 'event', payload: { ...data, phase: 'run' } },
+  data: { type: 'event', payload: { ...data, run_id: data.id, phase: 'run' } },
 });
 
 const runLogEvent = (data: {
@@ -67,7 +67,7 @@ const runLogEvent = (data: {
 }): Events.InterfaceEvent => ({
   type: 'event',
   eventType: 'run-update',
-  data: { type: 'log', payload: { ...data, stream: 'stderr', level: 'error' } },
+  data: { type: 'log', payload: { ...data, run_id: data.id, stream: 'stderr', level: 'error' } },
 });
 
 it('reports starting before start and binds a run-start event that arrives first', async () => {

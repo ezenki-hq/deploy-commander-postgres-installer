@@ -4,7 +4,6 @@ import { PostgresRequestError } from '../domain/errors';
 import type { LoginCredentials } from '../domain/credentials';
 import type { AccessRequest } from '../domain/requests';
 import type { PostgresConnection } from '../platform/connections';
-import type { PostgresInstallation } from '../platform/resources';
 import { RunFailedError } from '../platform/runTracker';
 import { deferred, fakeCaller } from '../test/fakes';
 import {
@@ -22,9 +21,6 @@ const resource: RPC.ResourceItem = {
   external: false,
   created_at: '2026-09-20T00:00:00Z',
   updated_at: '2026-09-20T00:00:00Z',
-};
-const installation: PostgresInstallation = {
-  resource,
 };
 const request = {
   currentManagerId: 'postgres-manager',
@@ -179,7 +175,7 @@ describe('createPostgresConnection', () => {
 
   it('requires both resource secret keys before approval', async () => {
     const { deps, approval } = createDeps();
-    deps.caller.getSecretKeys = vi.fn().mockResolvedValue(['USERNAME']);
+    deps.caller.getSecretKeys = vi.fn().mockResolvedValue([{ key: 'USERNAME' }]);
     await expect(createPostgresConnection(deps, request)).rejects.toMatchObject({ status: 400 });
     expect(approval).not.toHaveBeenCalled();
     expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
@@ -234,7 +230,9 @@ describe('createPostgresConnection', () => {
       .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
       .mockResolvedValueOnce({ items: [created.item], limit: 50, offset: 0, total: 1 });
     caller.getConnection = vi.fn().mockResolvedValue(details(created));
-    await expect(createPostgresConnection(deps, request)).resolves.toEqual({ connection: created.item });
+    await expect(createPostgresConnection(deps, request)).resolves.toEqual({
+      connection: created.item,
+    });
     expect(deps.runTracker.startAndWait).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'create-connection',
@@ -274,23 +272,36 @@ describe('createPostgresConnection', () => {
       .mockResolvedValueOnce({ items: [otherGroup.item], limit: 50, offset: 0, total: 1 })
       .mockResolvedValueOnce({ items: [otherGroup.item], limit: 50, offset: 0, total: 1 })
       .mockResolvedValueOnce({ items: [], limit: 50, offset: 0, total: 0 })
-      .mockResolvedValueOnce({ items: [connection('connection-a', request.metadata.requestedAccess, {
-        team: 'payments',
-        custom_deployer_group_id: 'group-a',
-        custom_deployer_connection_origin: 'created',
-        'postgres.access': 'database',
-        'postgres.database': 'orders',
-        'postgres.database-origin': 'managed',
-      }).item], limit: 50, offset: 0, total: 1 });
+      .mockResolvedValueOnce({
+        items: [
+          connection('connection-a', request.metadata.requestedAccess, {
+            team: 'payments',
+            custom_deployer_group_id: 'group-a',
+            custom_deployer_connection_origin: 'created',
+            'postgres.access': 'database',
+            'postgres.database': 'orders',
+            'postgres.database-origin': 'managed',
+          }).item,
+        ],
+        limit: 50,
+        offset: 0,
+        total: 1,
+      });
     caller.getConnection = vi.fn((id: string) =>
-      Promise.resolve(details(id === 'connection-b' ? otherGroup : connection('connection-a', request.metadata.requestedAccess, {
-        team: 'payments',
-        custom_deployer_group_id: 'group-a',
-        custom_deployer_connection_origin: 'created',
-        'postgres.access': 'database',
-        'postgres.database': 'orders',
-        'postgres.database-origin': 'managed',
-      }))),
+      Promise.resolve(
+        details(
+          id === 'connection-b'
+            ? otherGroup
+            : connection('connection-a', request.metadata.requestedAccess, {
+                team: 'payments',
+                custom_deployer_group_id: 'group-a',
+                custom_deployer_connection_origin: 'created',
+                'postgres.access': 'database',
+                'postgres.database': 'orders',
+                'postgres.database-origin': 'managed',
+              }),
+        ),
+      ),
     );
     await expect(createPostgresConnection(deps, groupRequest)).resolves.toMatchObject({
       connection: { id: 'connection-a' },
@@ -318,7 +329,9 @@ describe('createPostgresConnection', () => {
       .mockResolvedValueOnce({ items: [created.item], limit: 50, offset: 0, total: 1 });
     caller.getConnection = vi.fn().mockResolvedValue(details(created));
 
-    await expect(createPostgresConnection(deps, request)).resolves.toEqual({ connection: created.item });
+    await expect(createPostgresConnection(deps, request)).resolves.toEqual({
+      connection: created.item,
+    });
     expect(caller.getConnections).toHaveBeenCalledTimes(5);
   });
 

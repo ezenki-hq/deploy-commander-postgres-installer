@@ -7,7 +7,12 @@ import { ModalDialog } from '../components/ModalDialog';
 import { ProgressPanel } from '../components/ProgressPanel';
 import { TeardownDialog } from '../components/TeardownDialog';
 import { ActionButton } from '../components/ActionButton';
-import { parseCreateRequest, parseDeleteRequest, parseLinkRequest, parseUnlinkRequest } from '../domain/requests';
+import {
+  parseCreateRequest,
+  parseDeleteRequest,
+  parseLinkRequest,
+  parseUnlinkRequest,
+} from '../domain/requests';
 import { PostgresRequestError } from '../domain/errors';
 import { createInterfaceClient, type InterfaceClient } from '../platform/interfaceClient';
 import { loadDashboardProjection, type DashboardProjection } from '../platform/dashboardProjection';

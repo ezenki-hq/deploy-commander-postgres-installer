@@ -1,7 +1,11 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeCaller } from '../test/fakes';
-import { loadInstallationProjection, readInstallation, resolveOwnedPostgresResource } from './resources';
+import {
+  loadInstallationProjection,
+  readInstallation,
+  resolveOwnedPostgresResource,
+} from './resources';
 
 const resource = (id: string, overrides: Partial<RPC.ResourceItem> = {}): RPC.ResourceItem => ({
   id,
@@ -80,7 +84,7 @@ describe('readInstallation', () => {
           },
         },
       }),
-      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
     });
     await expect(readInstallation(caller, postgresResource)).resolves.toEqual({
       resource: postgresResource,
@@ -105,7 +109,7 @@ describe('readInstallation', () => {
           },
         },
       }),
-      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME']),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }]),
     });
     await expect(readInstallation(caller, postgresResource)).rejects.toMatchObject({ status: 400 });
   });
@@ -123,12 +127,14 @@ describe('readInstallation', () => {
           metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
         },
       }),
-      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
     });
-    await expect(resolveOwnedPostgresResource(caller, 'postgres-manager', 'resource-1')).resolves.toEqual(
-      postgresResource,
-    );
-    await expect(resolveOwnedPostgresResource(caller, 'other-manager', 'resource-1')).rejects.toMatchObject({
+    await expect(
+      resolveOwnedPostgresResource(caller, 'postgres-manager', 'resource-1'),
+    ).resolves.toEqual(postgresResource);
+    await expect(
+      resolveOwnedPostgresResource(caller, 'other-manager', 'resource-1'),
+    ).rejects.toMatchObject({
       status: 400,
     });
   });

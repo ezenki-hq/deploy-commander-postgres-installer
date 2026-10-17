@@ -14,7 +14,8 @@ async function targetConnection(
 ): Promise<RPC.ConnectionItem> {
   const connections = await listResourceConnectionSummaries(caller, resourceId);
   const target = connections.find((connection) => connection.id === connectionId);
-  if (!target) throw new PostgresRequestError(404, 'PostgreSQL connection was not found on this resource');
+  if (!target)
+    throw new PostgresRequestError(404, 'PostgreSQL connection was not found on this resource');
   await readPostgresConnection(caller, target);
   return target;
 }
@@ -97,7 +98,10 @@ export async function unlinkPostgresConnection(
   const currentGroup = labels[GROUP_ID];
   const origin = labels[ORIGIN];
   if (origin === 'created')
-    throw new PostgresRequestError(409, 'PostgreSQL connections created by this manager cannot be unlinked');
+    throw new PostgresRequestError(
+      409,
+      'PostgreSQL connections created by this manager cannot be unlinked',
+    );
   if (currentGroup !== undefined && currentGroup !== request.groupId)
     throw new PostgresRequestError(409, 'PostgreSQL connection belongs to another group');
   if (origin !== undefined && origin !== 'imported')

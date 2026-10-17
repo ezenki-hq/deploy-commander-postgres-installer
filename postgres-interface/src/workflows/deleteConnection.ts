@@ -142,7 +142,10 @@ async function deleteBatchPostgresConnections(
     if (!target)
       throw new PostgresRequestError(404, 'A requested PostgreSQL connection was not found');
     if (target.item.labels?.custom_deployer_connection_origin === 'imported')
-      throw new PostgresRequestError(409, 'Imported PostgreSQL connections must be unlinked, not deleted');
+      throw new PostgresRequestError(
+        409,
+        'Imported PostgreSQL connections must be unlinked, not deleted',
+      );
     return target;
   });
   const requestedSet = new Set(requestedIds);
@@ -169,7 +172,9 @@ async function deleteBatchPostgresConnections(
   if (peerSetFingerprint(refreshed.connections) !== peerSetFingerprint(initial.connections))
     throw new PostgresRequestError(409, 'The PostgreSQL connection set changed after approval');
   const targets = requested.map((before, index) => {
-    const target = refreshed.connections.find((connection) => connection.item.id === before.item.id);
+    const target = refreshed.connections.find(
+      (connection) => connection.item.id === before.item.id,
+    );
     if (!target || fingerprint(target) !== fingerprint(before))
       throw new PostgresRequestError(409, 'The PostgreSQL connection changed after approval');
     const remainingPeers = refreshed.connections.filter(
@@ -234,8 +239,23 @@ async function deleteOnePostgresConnection(
 ): Promise<string> {
   const initial = await installed(deps.caller, request.currentManagerId);
   const owned = initial.connections.filter(
-    (connection) => connection.managerId === request.callingManagerId,
+    (connection) =>
+      connection.managerId === request.callingManagerId &&
+      connection.item.labels?.custom_deployer_connection_origin !== 'imported',
   );
+  if (
+    requested &&
+    initial.connections.some(
+      (connection) =>
+        connection.item.id === requested &&
+        connection.item.labels?.custom_deployer_connection_origin === 'imported',
+    )
+  ) {
+    throw new PostgresRequestError(
+      409,
+      'Imported PostgreSQL connections must be unlinked, not deleted',
+    );
+  }
   if (requested && !owned.some((connection) => connection.item.id === requested)) {
     throw new PostgresRequestError(404, 'PostgreSQL connection was not found');
   }

@@ -275,10 +275,7 @@ function adminService(
   };
 }
 
-function loginEnvironment(
-  database: string,
-  databaseOwner?: string,
-): Record<string, string> {
+function loginEnvironment(database: string, databaseOwner?: string): Record<string, string> {
   return {
     TARGET_DATABASE: database,
     TARGET_USERNAME: '[[secret:run:USERNAME]]',

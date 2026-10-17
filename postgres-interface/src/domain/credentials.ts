@@ -53,11 +53,7 @@ export function generateAdminCredentials(): AdminCredentials {
 }
 
 export async function generateLoginCredentials(identity: LoginIdentity): Promise<LoginCredentials> {
-  const identityParts = [
-    identity.callerId,
-    identity.resourceId,
-    accessIdentity(identity.access),
-  ];
+  const identityParts = [identity.callerId, identity.resourceId, accessIdentity(identity.access)];
   if (identity.groupId !== undefined) identityParts.push(identity.groupId);
   const suffix = await identityDigest(identityParts);
   return {

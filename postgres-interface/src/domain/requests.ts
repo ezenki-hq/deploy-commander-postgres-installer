@@ -86,11 +86,7 @@ function validateCreateGroupLabels(labels: Record<string, string>): void {
   const groupId = labels.custom_deployer_group_id;
   const origin = labels.custom_deployer_connection_origin;
   if (groupId === undefined && origin === undefined) return;
-  if (
-    typeof groupId !== 'string' ||
-    groupId.trim() === '' ||
-    origin !== 'created'
-  ) {
+  if (typeof groupId !== 'string' || groupId.trim() === '' || origin !== 'created') {
     throw new PostgresRequestError(400, 'Invalid Custom Deployer connection labels');
   }
 }

@@ -124,7 +124,7 @@ describe('listResourceConnections', () => {
       getConnection: vi.fn((id: string) =>
         Promise.resolve(details(id === finalPeer.id ? finalPeer : item(id))),
       ),
-      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
     });
     const connections = await listResourceConnections(caller, 'resource-1');
     expect(connections).toHaveLength(51);
@@ -142,7 +142,7 @@ describe('readPostgresConnection', () => {
     const connection = item('connection-1');
     const caller = fakeCaller({
       getConnection: vi.fn().mockResolvedValue(details(connection)),
-      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+      getSecretKeys: vi.fn().mockResolvedValue([{ key: 'USERNAME' }, { key: 'PASSWORD' }]),
     });
     const result = await readPostgresConnection(caller, connection);
     expect(result).toMatchObject({

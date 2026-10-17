@@ -166,7 +166,13 @@ export async function createPostgresConnection(
   if (lookup.kind === 'match') return connectionResult(lookup.connection);
   if (
     peers.some((peer) =>
-      sameIdentity(peer, access, request.callingManagerId, refreshed.installation.resource.id, groupId),
+      sameIdentity(
+        peer,
+        access,
+        request.callingManagerId,
+        refreshed.installation.resource.id,
+        groupId,
+      ),
     )
   ) {
     throw new PostgresRequestError(

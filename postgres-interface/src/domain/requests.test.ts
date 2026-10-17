@@ -51,7 +51,11 @@ describe('parseCreateRequest', () => {
   it.each([
     { action: 'create-connection' },
     { action: 'create-connection', resource: ' ' },
-    { action: 'create-connection', resource: 'resource-1', labels: { custom_deployer_group_id: 'g1' } },
+    {
+      action: 'create-connection',
+      resource: 'resource-1',
+      labels: { custom_deployer_group_id: 'g1' },
+    },
     {
       action: 'create-connection',
       resource: 'resource-1',
@@ -125,9 +129,7 @@ describe('parseLinkRequest', () => {
       },
     },
   ])('rejects malformed link request %#', (metadata) => {
-    expect(() => parseLinkRequest(metadata)).toThrowError(
-      expect.objectContaining({ status: 400 }),
-    );
+    expect(() => parseLinkRequest(metadata)).toThrowError(expect.objectContaining({ status: 400 }));
   });
 });
 

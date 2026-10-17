@@ -14,10 +14,16 @@ export async function requireCredentialKeys(
   } catch {
     throw new PostgresRequestError(400, 'PostgreSQL credentials are unavailable');
   }
+  const names = Array.isArray(keys)
+    ? keys.map((entry) =>
+        typeof entry === 'object' && entry !== null && 'key' in entry
+          ? (entry as { key: unknown }).key
+          : undefined,
+      )
+    : [];
   if (
-    !Array.isArray(keys) ||
-    keys.length !== CREDENTIAL_KEYS.length ||
-    !CREDENTIAL_KEYS.every((key) => keys.includes(key))
+    names.length !== CREDENTIAL_KEYS.length ||
+    !CREDENTIAL_KEYS.every((key) => names.includes(key))
   ) {
     throw new PostgresRequestError(400, 'PostgreSQL credentials are unavailable');
   }
