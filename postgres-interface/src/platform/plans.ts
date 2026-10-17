@@ -191,8 +191,7 @@ SELECT format('ALTER ROLE %I WITH SUPERUSER LOGIN PASSWORD %L', :'target_usernam
 SQL
 exit 0`;
 
-export const ROLE_CLEANUP_SCRIPT = String.raw`${readiness}
-log "POSTGRES_MANAGER: listing databases for cleanup"
+const ROLE_CLEANUP_BODY = String.raw`log "POSTGRES_MANAGER: listing databases for cleanup"
 databases=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 -c "SELECT datname FROM pg_database WHERE datistemplate = false AND datallowconn = true") || fail "postgres-database-list-failed" 42
 log "POSTGRES_MANAGER: removing role ownership"
 printf '%s\n' "$databases" | while IFS= read -r TARGET_DATABASE; do
@@ -212,11 +211,11 @@ psql -X --quiet --set=ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || fail "postgres-
 SELECT format('DROP ROLE %I', :'target_username')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 \gexec
-SQL
-exit 0`;
+SQL`;
 
-export const DATABASE_CLEANUP_SCRIPT = String.raw`${readiness}
-log "POSTGRES_MANAGER: checking database ownership"
+export const ROLE_CLEANUP_SCRIPT = `${readiness}\n${ROLE_CLEANUP_BODY}\nexit 0`;
+
+const DATABASE_CLEANUP_BODY = String.raw`log "POSTGRES_MANAGER: checking database ownership"
 owner=$(psql -X --quiet --tuples-only --no-align --set=ON_ERROR_STOP=1 <<'SQL'
 \getenv target_database TARGET_DATABASE
 SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = :'target_database';
@@ -245,8 +244,9 @@ WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'target_username')
 SELECT format('DROP ROLE %I', :'database_owner')
 WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'database_owner')
 \gexec
-SQL
-exit 0`;
+SQL`;
+
+export const DATABASE_CLEANUP_SCRIPT = `${readiness}\n${DATABASE_CLEANUP_BODY}\nexit 0`;
 
 function adminEnvironment(installation: PostgresInstallation): Record<string, string> {
   return {
@@ -422,5 +422,60 @@ export function buildDeletePlan(input: {
         },
       ],
     },
+  };
+}
+
+export function buildBatchDeletePlan(input: {
+  installation: PostgresInstallation;
+  targets: Array<{
+    target: PostgresConnection;
+    effect: DeletionEffect;
+    databaseOwner?: string;
+  }>;
+}): RunnerMetadata {
+  if (input.targets.length === 0) throw new Error('At least one connection is required');
+  const ids = new Set<string>();
+  const environment: Record<string, string> = {};
+  const steps: string[] = [];
+  const removals: ConnectionRemove[] = [];
+
+  input.targets.forEach(({ target, effect, databaseOwner }, index) => {
+    if (target.resourceId !== input.installation.resource.id)
+      throw new Error('Connection belongs to another resource');
+    if (ids.has(target.item.id)) throw new Error('Connection IDs must be unique');
+    ids.add(target.item.id);
+    if (
+      effect === 'role-and-database' &&
+      (!databaseOwner || target.authority.access !== 'database')
+    )
+      throw new Error('Managed database owner is required');
+
+    const database =
+      target.authority.access === 'database' ? target.authority.database : 'postgres';
+    environment[`TARGET_USERNAME_${index}`] = target.username;
+    environment[`TARGET_DATABASE_${index}`] = database;
+    environment[`DATABASE_OWNER_${index}`] = databaseOwner ?? '';
+    steps.push(
+      `export TARGET_USERNAME="$TARGET_USERNAME_${index}"\n` +
+        `export TARGET_DATABASE="$TARGET_DATABASE_${index}"\n` +
+        `export DATABASE_OWNER="$DATABASE_OWNER_${index}"\n` +
+        (effect === 'role-and-database' ? DATABASE_CLEANUP_BODY : ROLE_CLEANUP_BODY),
+    );
+    removals.push({
+      name: `postgres-connection-${index}`,
+      id: target.item.id,
+      resource: { id: target.resourceId },
+    });
+  });
+
+  return {
+    services: {
+      'postgres-admin': adminService(
+        input.installation,
+        environment,
+        `${readiness}\n${steps.join('\n')}\nexit 0`,
+      ),
+    },
+    connections: { remove: removals },
   };
 }

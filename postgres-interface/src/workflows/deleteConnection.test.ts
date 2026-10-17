@@ -4,7 +4,11 @@ import type { AccessRequest } from '../domain/requests';
 import type { PostgresConnection } from '../platform/connections';
 import type { PostgresInstallation } from '../platform/resources';
 import { deferred } from '../test/fakes';
-import type { DeleteApprovalDecision, DeleteConnectionDeps } from './deleteConnection';
+import type {
+  DeleteApprovalContext,
+  DeleteApprovalDecision,
+  DeleteConnectionDeps,
+} from './deleteConnection';
 import { deletePostgresConnection } from './deleteConnection';
 
 const resource: RPC.ResourceItem = {
@@ -86,10 +90,12 @@ function createDeps(
   connections: PostgresConnection[] = [target()],
   overrides: Partial<DeleteConnectionDeps> = {},
 ) {
-  const approval = vi.fn(async (): Promise<DeleteApprovalDecision> => ({
-    allowed: true,
-    connectionId: connections[0]?.item.id ?? 'target',
-  }));
+  const approval = vi.fn(
+    async (context: DeleteApprovalContext): Promise<DeleteApprovalDecision> => ({
+      allowed: true,
+      connectionId: context.requestedConnectionId ?? connections[0]?.item.id ?? 'target',
+    }),
+  );
   let detailCalls = 0;
   const caller = {
     getMyResources: vi
@@ -170,6 +176,126 @@ describe('deletePostgresConnection', () => {
     );
     gate.resolve({ allowed: false });
     await expect(pending).rejects.toMatchObject({ status: 499 });
+  });
+
+  it('preflights every requested ID before starting any deletion', async () => {
+    const { deps, approval } = createDeps([target('connection-1')]);
+    await expect(
+      deletePostgresConnection(deps, {
+        ...explicitRequest,
+        metadata: { action: 'delete-connection', connectionIds: ['connection-1', 'missing'] },
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(approval).not.toHaveBeenCalled();
+    expect(deps.runTracker.startAndWait).not.toHaveBeenCalled();
+  });
+
+  it('approves every requested connection and starts one runner for the batch', async () => {
+    const first = target('connection-1');
+    const second = target('connection-2');
+    let active = [first, second];
+    const { deps, caller, approval } = createDeps(active);
+    caller.getConnections = vi.fn(async ({ limit, offset }) => {
+      const items = active.slice(offset, offset + limit).map((connection) => connection.item);
+      return { items, limit, offset, total: active.length };
+    });
+    caller.getConnection = vi.fn(async (id: string) => {
+      const connection = active.find((candidate) => candidate.item.id === id);
+      if (!connection) throw new Error('404');
+      return details(connection);
+    });
+    const completedRun = {
+      config: {
+        action: 'delete-connection',
+        manager: 'postgres-manager',
+        metadata: {},
+        run: 'run-1',
+        runner: 'runner',
+      },
+      run: { id: 'run-1', status: 2 },
+    } as unknown as RPC.GetRun;
+    vi.spyOn(deps.runTracker, 'startAndWait').mockImplementation(async (options) => {
+      const metadata = options.metadata as { connections?: { remove?: { id: string }[] } };
+      const removedIds = new Set(metadata.connections?.remove?.map(({ id }) => id));
+      active = active.filter((connection) => !removedIds.has(connection.item.id));
+      return completedRun;
+    });
+    const selected = ['connection-1', 'connection-2'];
+    const result = await deletePostgresConnection(deps, {
+      ...explicitRequest,
+      metadata: { action: 'delete-connection', connectionIds: selected },
+    });
+    expect(result).toEqual({ connections: selected });
+    expect(approval).toHaveBeenCalledTimes(2);
+    expect(approval).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        requestedConnectionId: 'connection-1',
+        choices: [expect.objectContaining({ id: 'connection-1', effect: 'role-only' })],
+      }),
+    );
+    expect(approval).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        requestedConnectionId: 'connection-2',
+        choices: [expect.objectContaining({ id: 'connection-2', effect: 'role-and-database' })],
+      }),
+    );
+    expect(deps.runTracker.startAndWait).toHaveBeenCalledOnce();
+    expect(deps.runTracker.startAndWait).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          connections: {
+            remove: [
+              expect.objectContaining({ id: 'connection-1' }),
+              expect.objectContaining({ id: 'connection-2' }),
+            ],
+          },
+        }),
+      }),
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+    expect(active).toEqual([]);
+  });
+
+  it('starts no run until all approvals and preserves records if the run fails', async () => {
+    const first = target('connection-1');
+    const second = target('connection-2');
+    const third = target('connection-3');
+    const active = [first, second, third];
+    const { deps, caller, approval } = createDeps(active);
+    caller.getConnections = vi.fn(async ({ limit, offset }) => {
+      const items = active.slice(offset, offset + limit).map((connection) => connection.item);
+      return { items, limit, offset, total: active.length };
+    });
+    caller.getConnection = vi.fn(async (id: string) => {
+      const connection = active.find((candidate) => candidate.item.id === id);
+      if (!connection) throw new Error('404');
+      return details(connection);
+    });
+    vi.spyOn(deps.runTracker, 'startAndWait').mockImplementation(async (options) => {
+      const remove = (options.metadata as { connections?: { remove?: { id: string }[] } })
+        .connections?.remove;
+      expect(remove).toHaveLength(3);
+      throw new Error('runner failed');
+    });
+    await expect(
+      deletePostgresConnection(deps, {
+        ...explicitRequest,
+        metadata: {
+          action: 'delete-connection',
+          connectionIds: ['connection-1', 'connection-2', 'connection-3'],
+        },
+      }),
+    ).rejects.toMatchObject({ status: 500 });
+    expect(approval).toHaveBeenCalledTimes(3);
+    expect(deps.runTracker.startAndWait).toHaveBeenCalledOnce();
+    expect(active.map((connection) => connection.item.id)).toEqual([
+      'connection-1',
+      'connection-2',
+      'connection-3',
+    ]);
   });
 
   it.each([

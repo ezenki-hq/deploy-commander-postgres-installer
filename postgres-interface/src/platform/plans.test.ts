@@ -12,6 +12,7 @@ import {
   EXISTING_DATABASE_SCRIPT,
   ROLE_CLEANUP_SCRIPT,
   SUPERUSER_SCRIPT,
+  buildBatchDeletePlan,
   buildDeletePlan,
   buildInstallPlan,
   buildProvisionPlan,
@@ -236,4 +237,50 @@ it('drops a final managed database through its deterministic owner role', () => 
     id: target.item.id,
     resource: { id: target.resourceId },
   });
+});
+
+it('builds one runner plan with ordered cleanups and removals for a batch', () => {
+  const second = {
+    ...target,
+    item: { ...target.item, id: 'connection-2' },
+    username: `dc_user_${'c'.repeat(32)}`,
+  };
+  const owner = `dc_db_${'d'.repeat(32)}`;
+  const plan = buildBatchDeletePlan({
+    installation,
+    targets: [
+      { target, effect: 'role-only' },
+      { target: second, effect: 'role-and-database', databaseOwner: owner },
+    ],
+  });
+  const service = plan.services!['postgres-admin'];
+  const command = service.command?.[2] ?? '';
+  expect(Object.keys(plan.services ?? {})).toEqual(['postgres-admin']);
+  expect(service.environment).toMatchObject({
+    TARGET_USERNAME_0: target.username,
+    TARGET_USERNAME_1: second.username,
+    TARGET_DATABASE_0: 'orders',
+    TARGET_DATABASE_1: 'orders',
+    DATABASE_OWNER_1: owner,
+  });
+  expect(command.indexOf('ROLE_CLEANUP')).toBe(-1);
+  expect(command.indexOf('listing databases for cleanup')).toBeLessThan(
+    command.indexOf('checking database ownership'),
+  );
+  expect(command).toContain('\\getenv target_username TARGET_USERNAME');
+  expect(command).toContain('DROP DATABASE');
+  expect(command).not.toContain(target.username);
+  expect(() => execFileSync('sh', ['-n', '-c', command])).not.toThrow();
+  expect(plan.connections?.remove).toEqual([
+    {
+      name: 'postgres-connection-0',
+      id: target.item.id,
+      resource: { id: target.resourceId },
+    },
+    {
+      name: 'postgres-connection-1',
+      id: second.item.id,
+      resource: { id: second.resourceId },
+    },
+  ]);
 });

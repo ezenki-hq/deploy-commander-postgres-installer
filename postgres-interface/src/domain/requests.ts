@@ -19,10 +19,9 @@ export type ParsedCreateRequest = {
   labels: Record<string, string>;
 };
 
-export type ParsedDeleteRequest = {
-  action: 'delete-connection';
-  connectionId: string | null;
-};
+export type ParsedDeleteRequest =
+  | { action: 'delete-connection'; connectionId: string | null }
+  | { action: 'delete-connection'; connectionIds: string[] };
 
 const RESERVED_LABELS = new Set([
   'postgres.access',
@@ -127,7 +126,25 @@ export function parseDeleteRequest(value: unknown): ParsedDeleteRequest {
   if (value.action !== 'delete-connection') {
     throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
   }
-  assertExactKeys(value, ['action', 'connection']);
+  assertExactKeys(value, ['action', 'connection', 'connections']);
+  if (value.connection !== undefined && value.connections !== undefined) {
+    throw new PostgresRequestError(400, 'Specify either connection or connections');
+  }
+  if (value.connections !== undefined) {
+    if (!Array.isArray(value.connections) || value.connections.length === 0) {
+      throw new PostgresRequestError(400, 'PostgreSQL connections must be a non-empty array');
+    }
+    const connectionIds = value.connections.map((id) => {
+      if (typeof id !== 'string' || id.trim() === '') {
+        throw new PostgresRequestError(400, 'Invalid PostgreSQL connection ID');
+      }
+      return id;
+    });
+    if (new Set(connectionIds).size !== connectionIds.length) {
+      throw new PostgresRequestError(400, 'PostgreSQL connection IDs must be unique');
+    }
+    return { action: 'delete-connection', connectionIds };
+  }
   if (value.connection === undefined) return { action: 'delete-connection', connectionId: null };
   if (typeof value.connection !== 'string' || value.connection.trim() === '') {
     throw new PostgresRequestError(400, 'Invalid PostgreSQL connection ID');

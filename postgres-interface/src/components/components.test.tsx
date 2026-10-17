@@ -41,6 +41,49 @@ it('keeps a fixed access proposal read-only', () => {
   expect(screen.queryByRole('textbox', { name: /database/i })).not.toBeInTheDocument();
 });
 
+it('shows the database action before its matching name field and preserves each name', async () => {
+  const onDecision = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <CreateConnectionDialog
+      context={{
+        callingManagerId: 'consumer-1',
+        requestedAccess: null,
+        callerLabels: {},
+        databaseNames: ['orders'],
+      }}
+      onDecision={onDecision}
+    />,
+  );
+
+  const action = screen.getByRole('combobox', { name: /database action/i });
+  const newName = screen.getByRole('textbox', { name: /new database name/i });
+  expect(action.compareDocumentPosition(newName) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByRole('combobox', { name: /^database$/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
+  await user.type(newName, 'audit');
+
+  await user.selectOptions(action, 'existing');
+  const existingName = screen.getByRole('combobox', { name: /^database$/i });
+  expect(existingName).toHaveValue('orders');
+  expect(existingName).toHaveAttribute('list', 'postgres-databases');
+  await user.clear(existingName);
+  await user.type(existingName, 'ledger');
+  await user.click(screen.getByRole('button', { name: /^approve$/i }));
+  expect(onDecision).toHaveBeenLastCalledWith({
+    allowed: true,
+    access: { scope: 'database', operation: 'existing', database: 'ledger' },
+  });
+
+  await user.selectOptions(action, 'create');
+  expect(screen.getByRole('textbox', { name: /new database name/i })).toHaveValue('audit');
+  await user.click(screen.getByRole('button', { name: /^approve$/i }));
+  expect(onDecision).toHaveBeenLastCalledWith({
+    allowed: true,
+    access: { scope: 'database', operation: 'create', database: 'audit' },
+  });
+});
+
 it('allows labels-only requests to choose access and disables empty database approval', async () => {
   render(
     <CreateConnectionDialog

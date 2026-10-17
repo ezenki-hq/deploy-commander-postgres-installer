@@ -163,15 +163,35 @@ Or let the user select from that manager's connections:
 { "action": "delete-connection" }
 ```
 
+Delete several of the calling manager's connections in one request:
+
+```json
+{ "action": "delete-connection", "connections": ["connection-1", "connection-2"] }
+```
+
 Every deletion requires explicit confirmation. The manager refreshes the selected connection
 and its peers after approval; a changed target or changed cleanup consequence returns `409`
-before a run starts. On success the child closes with only the deleted ID:
+before a run starts. For an array request, the manager validates and confirms every ID, then
+starts one runner run. That run performs cleanup in array order and submits all connection
+removals together after cleanup succeeds. If cleanup fails, Deploy Commander keeps the
+connection records; PostgreSQL changes made by earlier cleanup steps may already have occurred.
+A successful single-ID request closes with the deleted ID:
 
 ```json
 {
   "manager": "postgres-manager-id",
   "ok": true,
   "result": { "connection": "connection-1" }
+}
+```
+
+A successful array request closes with all deleted IDs:
+
+```json
+{
+  "manager": "postgres-manager-id",
+  "ok": true,
+  "result": { "connections": ["connection-1", "connection-2"] }
 }
 ```
 

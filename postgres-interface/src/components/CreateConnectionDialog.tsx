@@ -13,11 +13,12 @@ export function CreateConnectionDialog({
   const [scope, setScope] = useState<'database' | 'full'>(
     context.requestedAccess?.scope ?? 'database',
   );
-  const [database, setDatabase] = useState(
+  const [existingDatabase, setExistingDatabase] = useState(
     context.requestedAccess?.scope === 'database'
       ? context.requestedAccess.database
       : (context.databaseNames[0] ?? ''),
   );
+  const [newDatabaseName, setNewDatabaseName] = useState('');
   const [operation, setOperation] = useState<'create' | 'existing'>(
     context.requestedAccess?.scope === 'database' ? context.requestedAccess.operation : 'create',
   );
@@ -25,6 +26,12 @@ export function CreateConnectionDialog({
     context.requestedAccess?.scope === 'full' ? context.requestedAccess.superuser : false,
   );
   const fixed = context.requestedAccess;
+  const database =
+    fixed?.scope === 'database'
+      ? fixed.database
+      : operation === 'create'
+        ? newDatabaseName
+        : existingDatabase;
   const access: AccessRequest =
     scope === 'database' ? { scope, operation, database } : { scope, superuser };
   const canApprove = fixed !== null || scope === 'full' || database.trim() !== '';
@@ -63,30 +70,43 @@ export function CreateConnectionDialog({
           {scope === 'database' ? (
             <>
               <label className="grid gap-2 font-medium text-slate-800">
-                <span>Database</span>
-                <input
-                  className="rounded-lg border border-slate-300 px-3 py-2"
-                  value={database}
-                  list="postgres-databases"
-                  onChange={(event) => setDatabase(event.target.value)}
-                />
-              </label>
-              <datalist id="postgres-databases">
-                {context.databaseNames.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
-              <label className="grid gap-2 font-medium text-slate-800">
-                <span>Operation</span>
+                <span>Database action</span>
                 <select
                   className="rounded-lg border border-slate-300 bg-white px-3 py-2"
                   value={operation}
                   onChange={(event) => setOperation(event.target.value as 'create' | 'existing')}
                 >
-                  <option value="create">Create manager-owned database</option>
+                  <option value="create">Create a new database</option>
                   <option value="existing">Use existing database</option>
                 </select>
               </label>
+              {operation === 'create' ? (
+                <label className="grid gap-2 font-medium text-slate-800">
+                  <span>New database name</span>
+                  <input
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                    value={newDatabaseName}
+                    onChange={(event) => setNewDatabaseName(event.target.value)}
+                  />
+                </label>
+              ) : (
+                <>
+                  <label className="grid gap-2 font-medium text-slate-800">
+                    <span>Database</span>
+                    <input
+                      className="rounded-lg border border-slate-300 px-3 py-2"
+                      value={existingDatabase}
+                      list="postgres-databases"
+                      onChange={(event) => setExistingDatabase(event.target.value)}
+                    />
+                  </label>
+                  <datalist id="postgres-databases">
+                    {context.databaseNames.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </>
+              )}
             </>
           ) : (
             <label className="flex items-center gap-2 font-medium text-slate-800">

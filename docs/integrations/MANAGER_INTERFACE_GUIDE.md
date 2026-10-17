@@ -75,7 +75,7 @@ The backend remains the final authorization boundary.
 Install the package:
 
 ```sh
-npm install @ezenki/deploy-commander-installer-interface@^0.6.2
+npm install @ezenki/deploy-commander-installer-interface@^0.7.0
 ```
 
 The package provides:
@@ -404,18 +404,40 @@ const result = await caller.start({
   action: "deploy",
   runner: runnerId,
   metadata: { requestedBy: "release-page" },
+  config: { image: "example/app:1.2.3" },
   note: "Deploy version 1.2.3",
   platform: "docker",
   platform_data: { image: "example/app:1.2.3" },
+  labels: { environment: "production" },
   target: { kind: "resource", id: resourceId },
+  secrets: { REGISTRY_TOKEN: "<initial-secret-value>" },
 });
 ```
 
-The options-object form is preferred. `target` is optional, but use it when a
-run acts on a durable resource, deployment, or other managed entity. It makes
-the association queryable without relying on arbitrary metadata.
+The options-object form is preferred. Run configuration fields have separate
+owners and purposes:
 
-The legacy positional overload remains supported:
+| Field            | Purpose                                                                       |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `manager`, `run` | Trusted Commander-assigned manager and run UUIDs.                             |
+| `runner`         | Runner image or executable selected for the action.                           |
+| `platform`       | Optional execution platform, such as `docker`.                                |
+| `platform_data`  | Optional platform-specific action input.                                      |
+| `action`         | Action the runner should execute.                                             |
+| `metadata`       | Flexible input for the runner action.                                         |
+| `config`         | Optional raw JSON input owned by the manager.                                 |
+| `target`         | Optional structured association to a durable object operated on by the run.   |
+| `secrets`        | Optional string map stored for this exact run and omitted from runner config. |
+
+`note` and `labels` belong to the run record, not its runner configuration.
+Commander and the agent forward manager `config` without interpreting its
+structure, and the runner receives the complete configuration with it included
+when supplied. Omit `config` or use `null` when no manager config is supplied.
+Use `target` when a run acts on a durable resource, deployment, or other
+managed entity; it makes the association queryable without relying on arbitrary
+metadata.
+
+The legacy positional form remains supported:
 
 ```ts
 start(
@@ -425,7 +447,10 @@ start(
   note?,
   platform?,
   platform_data?,
-  target?
+  target?,
+  labels?,
+  config?,
+  secrets?
 )
 ```
 
@@ -442,6 +467,24 @@ Returns:
 The `metadata` and `platform_data` values are intentionally unstructured.
 Do not use metadata as a substitute for `target` when the relationship should
 be filterable.
+
+Initial secret values are sent once with the start request. The agent stores
+them under the new run's ID; they are not returned in run configuration,
+ordinary run responses, or manager RPC results.
+
+### Secret calls
+
+```ts
+const keys = await caller.getSecretKeys("resource", resourceId);
+await caller.setSecret("resource", resourceId, "REGISTRY_TOKEN", "<value>");
+await caller.deleteSecret("resource", resourceId, "REGISTRY_TOKEN");
+```
+
+`getSecretKeys` returns only key names and timestamps. The library has no
+method to read a stored value. The manager ID recorded on a connection may
+list its keys. The manager that owns the connection's resource may also list
+keys and may change that secret. The current manager identity is injected by Deploy
+Commander, and each operation is authorized by the backend.
 
 ### List Runs
 
@@ -656,6 +699,44 @@ if (metadata && typeof metadata === "object" && typeof metadata.resourceId === "
   console.log(metadata.resourceId);
 }
 ```
+
+### List Managers and Manager API Files
+
+The parent bridge exposes manager and API-file catalog lists through options
+objects. Deploy Commander applies the list filters on the server:
+
+```ts
+const managers = await caller.getManagers({
+  name: "production",
+  label_exists: ["environment"],
+  limit: 25,
+  offset: 0,
+});
+
+const files = await caller.getFiles({
+  name: "app.js",
+  label_exists: ["release"],
+  limit: 25,
+  offset: 0,
+});
+```
+
+`getFiles` searches the current manager's API-file catalog. Its labels describe
+backend API files and their metadata. They are separate from the HTML,
+JavaScript, and other bytes in the published manager interface.
+
+Manager interfaces can read label values through the same RPC bridge:
+
+```ts
+const environments = await caller.getManagerLabelValues({
+  key: "environment",
+  limit: 25,
+  offset: 0,
+});
+```
+
+Manager-list visibility and authorization follow the current parent bridge
+policy.
 
 ### Platform Credentials
 
@@ -1191,7 +1272,8 @@ Browser events are live notifications, not the durable source of truth. An
 interface can be closed while a run executes, and a reconnect can replay an
 already-seen update. Reconcile the latest relevant run with `getLatestRun`,
 catch up with `getRunEvents`, `getRunLogs`, or `getRunUpdates`, and suppress
-duplicates by `(run ID, update type, sequence)` before applying live updates.
+duplicates by `(run_id, update type, sequence)` before applying live updates.
+Both event and log update payloads include the required `run_id` field.
 
 ```ts
 function handleEvent(event: Events.InterfaceEvent) {
@@ -1247,18 +1329,19 @@ function handleRunUpdate(update: Events.RunUpdateData) {
   if (update.type === "event") {
     const event = update.payload;
 
-    console.log(event.seq, event.phase, event.status, event.message);
+    console.log(event.run_id, event.seq, event.phase, event.status, event.message);
 
     return;
   }
 
   const log = update.payload;
 
-  console.log(log.seq, log.stream, log.level, log.message);
+  console.log(log.run_id, log.seq, log.stream, log.level, log.message);
 }
 ```
 
-Live event payload fields are optional.
+The `run_id` field is required on both payload types. Other live event and log
+payload fields are optional.
 
 Sequence zero may be omitted by older live producers. In that compatibility
 case, deliver the update but do not advance a durable watermark from it. For
@@ -1742,11 +1825,64 @@ The most important rule is that the manager frontend may request actions, but De
 
 ## Labels
 
-Runs, resources, connections, and the current manager can expose optional
-string labels. Use the label-aware list/detail query options to request
+Runs, resources, connections, the current manager, and manager API file
+catalog entries can expose optional string labels. Use the label-aware
+list/detail query options to request
 `include_labels` or selected `label_key` values; label filters are exact
 `key=value` expressions and support `all` or `any` matching. `label_key`
 implies inclusion, while filters alone do not add labels to responses.
+
+List options also accept `label_exists: string[]`. This finds records carrying
+a key whether its value is empty or nonempty. Exact `labels` and
+`label_exists` predicates combine with `label_match: "all" | "any"`; the
+default is `all`. For example:
+
+```ts
+const runs = await caller.getRuns({
+  labels: { tier: "api" },
+  label_exists: ["environment"],
+  label_match: "all",
+  limit: 50,
+  offset: 0,
+});
+
+const resources = await caller.getMyResources({
+  label_exists: ["environment"],
+});
+```
+
+Use collection-specific methods to find distinct values. Each takes one
+options object with a required `key`, the collection's filters, and optional
+value pagination. The result has `key`, sorted `values`, `total`, `limit`, and
+`offset`. Empty values are returned as `""`.
+
+```ts
+const environments = await caller.getResourceLabelValues({
+  key: "environment",
+  type: "service",
+  label_exists: ["tier"],
+  limit: 25,
+  offset: 0,
+});
+
+const connectionRegions = await caller.getConnectionLabelValues({
+  key: "region",
+  resource: resourceId,
+});
+
+const fileReleases = await caller.getFileLabelValues({
+  key: "release",
+  name: "app.js",
+});
+```
+
+The available methods are `getManagerLabelValues`, `getRunLabelValues`,
+`getResourceLabelValues`, `getMyResourceLabelValues`,
+`getConnectionLabelValues`, and `getFileLabelValues`. Resource methods keep
+global and current-manager-owned scopes distinct. Run and file methods use the
+trusted current manager, and connection values follow the existing
+owner-or-resource-owner visibility rule. The library sends these calls through
+RPC; manager frontends should not call the HTTP routes directly.
 
 The caller may replace or remove labels through the typed `set*Label` and
 `remove*Label` RPC methods. The bridge supplies the trusted manager context;
@@ -1916,10 +2052,114 @@ Do not supply or attempt to override trusted current-manager identity in scoped 
 
 Deploy Commander owns manager context and remains the final authorization boundary.
 
-### General rule
+#### Deploy Commander — General Manager Creation Rules
+
+1. Prefer Native Platform Capabilities
 
 Prefer Deploy Commander’s native resources, connections, runs, history, labels, and lifecycle tooling before introducing additional persistence or custom infrastructure.
 
-Add manager-specific database state only when the existing platform primitives do not represent the requirement cleanly. If you are using the database ensure you check to see if the database is initialized and if not initialize it.
+Keep managers as simple as possible and reuse existing platform functionality.
 
-Never require a manager frontend to perform an operation immediately after a run completes. Assume the manager interface is no longer open when the run finishes. Any required post-run work must be part of the durable run/backend workflow or be safely recoverable when the manager is opened again.
+2. Database Usage
+
+Add manager-specific database state only when the existing platform primitives do not represent the requirement cleanly.
+
+If using the database, always check whether it has been initialized and initialize it if necessary.
+
+3. Default Manager Scope
+
+Managers primarily designed to install resources (such as NATS, PostgreSQL, or Redis) must default to managing only the resource's **deployment and connections**.
+
+Do not implement additional functionality such as direct resource administration, inspection, monitoring, or user/account management unless explicitly requested by the developer.
+
+Additional management functionality must not be introduced simply because the installed resource supports it.
+
+4. Runs Are for State Changes Only
+
+Runs must only be used for installations, configuration changes, teardown, and other state-altering operations.
+
+**Never use runs to inspect resources, retrieve data, or perform read-only operations.** This includes triggering inspection runs when a manager loads.
+
+Reading existing run status and history is permitted; creating a new run solely to retrieve information is not.
+
+If explicitly authorized functionality requires retrieving data directly from an installed resource, the manager must be full-stack and use its backend for that access.
+
+Never use runs as a substitute for a backend.
+
+5. Frontend-First Architecture
+
+Managers should be frontend-only whenever possible, using existing Deploy Commander APIs and capabilities instead of introducing a dedicated backend.
+
+If a backend is necessary, explain to the developer why it is required and why a frontend-only approach is insufficient.
+
+Do not expand a manager's functionality or introduce a backend without developer authorization.
+
+6. Backend Implementation
+
+Manager backends must be implemented in Go unless the developer explicitly specifies another language.
+
+Use `gcr.io/distroless/static-debian12:nonroot` as the backend image base to keep the image small and simple.
+
+Keep the Dockerfile minimal.
+
+When implementing a full-stack manager, keep the initial installer frontend separate from the actual manager frontend.
+
+The initial installer for a full-stack manager must remain separate from the actual manager frontend.
+
+The installer must not require the user to specify the full-stack manager's backend image or deployment runner. These must be predefined and configured automatically.
+
+Other installation options may be exposed as needed, unless explicitly instructed otherwise.
+
+7. Standard Deployment Runner
+
+Always use `ezenki/deploy-commander-runner` for deployment operations.
+
+Never create a custom runner unless explicitly instructed by the developer.
+
+If the runner's integration guide is missing or the runner appears to lack required functionality, inform the developer before proceeding.
+
+8. Live Run Events
+
+Use the `createWire` event callback for live run updates.
+
+Register and remove listeners with the active view.
+
+Use run history for initial state and missed events. Do not poll for live events.
+
+9. Run Outcome Verification
+
+Describe a specific outcome, such as "teardown complete," only when the durable run identifies the intended action and the verified runner contract makes that outcome part of a successful run.
+
+Do not infer specific outcomes solely from a generic successful run status.
+
+10. Durable Post-Run Operations
+
+Never require a manager frontend to perform an operation immediately after a run completes.
+
+Assume the manager interface is no longer open when the run finishes.
+
+Any required post-run work must be part of the durable run/backend workflow or be safely recoverable when the manager is opened again.
+
+11. Prevent Conflicting Runs
+
+Do not allow conflicting runs while a relevant run is queued or running.
+
+When a run that affects an action is queued or running, disable the UI and other manager mechanisms that could start that action again.
+
+Do not assume the current browser initiated the run. It may have been started by another browser, manager instance, or backend process.
+
+Check existing run state when the manager loads, listen for run-start events to detect newly started runs, and re-enable the action only after the relevant run reaches a terminal state.
+
+12. Teardown Workflows
+
+A manager frontend may request teardown and observe its status, but must not chain teardown steps in browser callbacks.
+
+The backend must continue or resume the workflow if the user navigates away or closes the tab.
+
+Runner jobs must clear the redirect before full teardown removes the service.
+
+13. UI Design
+
+Use Tailwind CSS to create a clean, polished, modern, and responsive manager interface unless explicitly instructed otherwise.
+
+Maintain consistent styling and a user-friendly experience throughout the manager.

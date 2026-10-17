@@ -337,6 +337,27 @@ describe('child App approval and failure states', () => {
     );
   });
 
+  it('accepts a multi-connection delete request and closes with all deleted IDs', async () => {
+    const ids = ['connection-1', 'connection-2'];
+    const client = childClient({ action: 'delete-connection', connections: ids });
+    const deleteConnection = vi.fn(async (_deps, request) => ({
+      connections: request.metadata.connectionIds,
+    }));
+    render(<App client={client} services={appServices({ deleteConnection })} />);
+    await waitFor(() => expect(deleteConnection).toHaveBeenCalledOnce());
+    expect(deleteConnection.mock.calls[0][1].metadata).toEqual({
+      action: 'delete-connection',
+      connectionIds: ids,
+    });
+    await waitFor(() =>
+      expect(client.wire.close).toHaveBeenCalledWith({
+        manager: 'postgres-manager',
+        ok: true,
+        result: { connections: ids },
+      }),
+    );
+  });
+
   it('sanitizes unknown child errors', async () => {
     const client = childClient({ action: 'create-connection' });
     render(

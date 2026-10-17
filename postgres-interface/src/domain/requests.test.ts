@@ -120,4 +120,27 @@ describe('parseDeleteRequest', () => {
       { action: 'delete-connection', connectionId: 'connection-1' },
     );
   });
+
+  it('accepts a non-empty array of explicit connection IDs', () => {
+    expect(
+      parseDeleteRequest({
+        action: 'delete-connection',
+        connections: ['connection-1', 'connection-2'],
+      }),
+    ).toEqual({
+      action: 'delete-connection',
+      connectionIds: ['connection-1', 'connection-2'],
+    });
+  });
+
+  it.each([
+    { action: 'delete-connection', connections: [] },
+    { action: 'delete-connection', connections: ['connection-1', ''] },
+    { action: 'delete-connection', connections: ['connection-1', 'connection-1'] },
+    { action: 'delete-connection', connections: ['connection-1'], connection: 'connection-2' },
+  ])('rejects invalid connection arrays %#', (metadata) => {
+    expect(() => parseDeleteRequest(metadata)).toThrowError(
+      expect.objectContaining({ status: 400 }),
+    );
+  });
 });

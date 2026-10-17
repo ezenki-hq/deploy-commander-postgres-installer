@@ -1,58 +1,104 @@
 # Resource Connection Manager Guide
 
-This guide is for authors of a Deploy Commander manager that owns resources and creates or deletes connections for those resources. Custom Deployer uses this manager-owned workflow for its default form's deployment-group connection pool.
+This guide is for Deploy Commander managers that own resources and manage connections attached to them. Custom Deployer's default group form asks the resource-owning manager to create, link, unlink, or delete connections. It does not implement resource-specific setup or cleanup.
 
-For low-level interface startup, authentication, RPC, connection configuration, and authorization details, use the current [Manager Interface Guide](docs/integration/MANAGER_INTERFACE_GUIDE.md) and [Commander Manager Integration Guide](docs/integration/COMMANDER_MANAGER_INTEGRATION_GUIDE.md). For how the runner consumes a connection reference, use the [Deployment Runner Implementation Guide](docs/integration/DEPLOYMENT_RUNNER_IMPLEMENTATION_GUIDE.md).
+For manager startup, authentication, RPC, and authorization, use the current [Manager Interface Guide](docs/integration/MANAGER_INTERFACE_GUIDE.md) and [Commander Manager Integration Guide](docs/integration/COMMANDER_MANAGER_INTEGRATION_GUIDE.md). For runner connection references, use the [Deployment Runner Implementation Guide](docs/integration/DEPLOYMENT_RUNNER_IMPLEMENTATION_GUIDE.md).
 
-## Ownership
+## Ownership and membership
 
-The manager that owns a resource owns the setup and cleanup semantics for connections attached to that resource. Custom Deployer chooses the resource and starts the owning manager's interface; it does not implement database, registry, or other resource-specific connection setup.
+The manager that owns a resource owns setup and cleanup for connections attached to that resource. Validate the supplied resource and connection through the authorized manager interface. Deploy Commander provides the trusted identity of the opened manager; do not trust a caller-supplied manager identity or accept a connection attached to an unrelated resource.
 
-Deploy Commander supplies the trusted identity of the manager that opened the interface. Treat the supplied resource and connection IDs as requests to validate through the scoped manager interface. Do not trust a caller-supplied manager identity or accept a connection attached to an unrelated resource.
+Custom Deployer discovers group membership from Deploy Commander connection labels. Its query uses the exact **custom_deployer_group_id** label and requests labels in the result. It does not filter by connection manager. A connection is available to a group when it has that group's label and is attached to an eligible resource. Stage-labeled connections and connections attached to Commander or Corvo resources are excluded.
 
-## Create request
+The origin label is:
 
-Custom Deployer opens the manager identified by the selected resource's `manager` field and passes this interface metadata:
+```text
+custom_deployer_connection_origin = created | imported
+```
+
+It records whether the connection was created for this group or imported from an existing visible connection. It controls cleanup behavior, not membership. Preserve unrelated labels when adding or removing group labels. Do not put connection metadata, credentials, or secrets in labels.
+
+The default form does not save active connection IDs in group shared configuration. Older saved lists are migration hints only. Managers that do not implement the link and unlink requests below cannot complete import, legacy migration, or removal of imported connections.
+
+## Create a group connection
+
+Custom Deployer opens the manager identified by the selected resource's **manager** field and sends:
 
 ```json
 {
   "action": "create-connection",
   "resource": "<resource-id>",
   "labels": {
-    "custom_deployer_group_id": "<deployment-group-id>"
+    "custom_deployer_group_id": "<deployment-group-id>",
+    "custom_deployer_connection_origin": "created"
   }
 }
 ```
 
-`labels` is optional in the generic workflow. When present, it is classification and discovery metadata for the Deploy Commander connection. It is not manager-specific connection configuration. For this request, preserve the supplied group label on the resulting connection so Custom Deployer can recover it after an interrupted save and clean it up when the deployment group is deleted.
-
-The manager should:
-
-1. Validate the request shape and confirm that the resource exists and is owned by the current manager.
-2. Run its normal resource-specific setup and validation workflow.
-3. Create the Deploy Commander connection through its authorized manager interface, attached to the requested resource and carrying the requested labels.
-4. Close the child interface with a successful result containing the authoritative created connection identity and ownership fields.
-
-The successful close result must include a `connection` object with at least `id`, `manager`, `resource`, and `labels`, for example:
+Run the manager's normal resource-specific setup and validation. Create the connection attached to the requested resource, preserving existing labels and applying the requested labels. The successful interface result must contain a **connection** object identifying the created Deploy Commander connection:
 
 ```json
 {
   "connection": {
     "id": "<connection-id>",
-    "manager": "<trusted-current-manager-id>",
     "resource": "<resource-id>",
     "labels": {
-      "custom_deployer_group_id": "<deployment-group-id>"
+      "custom_deployer_group_id": "<deployment-group-id>",
+      "custom_deployer_connection_origin": "created"
     }
   }
 }
 ```
 
-Custom Deployer verifies the returned identity and then performs a scoped single-connection read before saving the reference. Do not return credentials or other secret connection configuration in the child close result. A failed or cancelled workflow should close with the standard failed interface response; Custom Deployer leaves the group unchanged. If creation succeeded but the group save later conflicts, the group label makes the connection discoverable for recovery.
+Custom Deployer verifies the returned identity and then confirms the connection appears in a fresh group-label query. Do not return connection configuration or secrets in the interface result. A failed or cancelled workflow must return the standard failed interface response.
 
-## Delete request
+### Declaring connection secret keys
 
-Deletion is also performed by the manager that owns the attached resource. Custom Deployer passes an array even when deleting one connection:
+When a connection has secrets that a consuming deployment may use, include their key names in the live connection metadata under `secret_keys`:
+
+```json
+{
+  "metadata": {
+    "host": "db.internal",
+    "secret_keys": ["PASSWORD", "REPLICATION_TOKEN"]
+  }
+}
+```
+
+This is a declaration of available keys only. Never include secret values in connection metadata or the interface result. Keep the list in sync when the owning manager adds or removes connection secrets. Custom Deployer uses the declared key name to create a runner secret reference; the runner reads the value through Deploy Commander's authorized secret API. In the default form, secret bindings are supported for command arguments, environment values, and health-check test strings.
+
+## Link an existing visible connection
+
+When a user imports an existing unlinked connection, Custom Deployer opens that resource's owning manager and sends:
+
+```json
+{
+  "action": "link-connection",
+  "resource": "<resource-id>",
+  "connection": "<connection-id>",
+  "labels": {
+    "custom_deployer_group_id": "<deployment-group-id>",
+    "custom_deployer_connection_origin": "imported"
+  }
+}
+```
+
+Validate that the connection is attached to the requested resource and that the resource belongs to the current manager. Add the requested labels without replacing unrelated labels. Return a successful interface result containing the authoritative **connection** object with the same **id** and **resource**, plus the requested labels. Custom Deployer verifies that identity and confirms group membership with a fresh label query after the manager closes.
+
+The same request is used to migrate a legacy saved connection reference that has not yet been labeled for the group.
+
+## Remove a connection from a group
+
+Group membership removal depends on the origin:
+
+- A connection with origin **created** is deleted through the resource manager using the generic delete request below.
+- A connection with origin **imported** stays in Deploy Commander and is unlinked using the request below.
+
+Custom Deployer prevents removal while a stage service still references the connection. It verifies that the connection no longer appears in the group after the manager workflow. Do not directly delete or unlink another manager's connection state outside the owning manager workflow.
+
+### Delete a created connection
+
+Custom Deployer sends an array even when deleting a single connection:
 
 ```json
 {
@@ -61,22 +107,32 @@ Deletion is also performed by the manager that owns the attached resource. Custo
 }
 ```
 
-The manager should:
+Resolve every connection through the current manager's authorized interface, confirm its attached resource is owned by this manager, perform required resource-specific cleanup, and delete the Deploy Commander connection. Close successfully only after deletion is complete.
 
-1. Validate the request and resolve each connection through the current manager's authorized interface.
-2. Confirm that each connection is attached to a resource owned by this manager.
-3. Perform resource-specific cleanup required before removing each connection.
-4. Delete the Deploy Commander connection and close successfully only after the requested deletion is complete.
+### Unlink an imported connection
 
-If cleanup or deletion fails, return a failed interface response and preserve enough state for a retry. Custom Deployer checks that a requested group-owned connection is no longer visible after the manager closes. Imported connections are only unlinked from the deployment group and are not sent through this deletion workflow.
+Custom Deployer sends:
+
+```json
+{
+  "action": "unlink-connection",
+  "resource": "<resource-id>",
+  "connection": "<connection-id>",
+  "group": "<deployment-group-id>"
+}
+```
+
+Validate that the connection is attached to the requested resource and that the resource belongs to this manager. Remove the requested group's **custom_deployer_group_id** and origin labels while preserving unrelated labels and the Deploy Commander connection itself. Close successfully after the label update; Custom Deployer confirms the connection is no longer a member of the group.
+
+If the manager does not support **link-connection** or **unlink-connection**, return a failed interface response. Custom Deployer will leave its labels unchanged and display the workflow error. Do not silently delete an imported connection or have Custom Deployer modify labels directly.
 
 ## Keep Corvo routing separate
 
-Corvo connections carry routing state and use Corvo's dedicated create, update, and delete workflow. Do not handle them as generic group resource connections. Follow the [Corvo Manager Integration Guide](docs/integration/CORVO_MANAGER_INTEGRATION_GUIDE.md) for that contract.
+Corvo connections carry routing state and use Corvo's dedicated create, update, and delete workflow. Do not handle them as generic group resource connections. Follow the [Corvo Manager Integration Guide](docs/integration/CORVO_MANAGER_INTEGRATION_GUIDE.md).
 
 ## Runner boundary
 
-For each service that uses a group connection, Custom Deployer sends the runner a connection reference:
+For each service that uses a group connection, Custom Deployer sends the runner a reference:
 
 ```json
 {
@@ -88,4 +144,4 @@ For each service that uses a group connection, Custom Deployer sends the runner 
 }
 ```
 
-Custom Deployer resolves configured service-field bindings from the live connection metadata before starting a run. The runner receives the concrete service configuration and the resource/connection reference; it resolves and validates the platform connection descriptor under the runner contract. Do not put connection metadata or secrets in group labels, published form files, or the child-interface close result.
+Before starting a deploy run, Custom Deployer reads current connection metadata and resolves any service-field bindings. The runner receives the concrete service configuration plus the resource and connection IDs; it resolves the live platform connection descriptor under the runner contract. Do not return connection metadata or secrets in group labels, published form files, or the child-interface result.

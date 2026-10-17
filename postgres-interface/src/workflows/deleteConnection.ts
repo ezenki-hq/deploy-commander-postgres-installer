@@ -3,8 +3,12 @@ import { databaseOwnerRole as defaultDatabaseOwnerRole } from '../domain/credent
 import { PostgresRequestError, rpcStatus } from '../domain/errors';
 import { deletionEffect, type ConnectionAuthority, type DeletionTarget } from '../domain/labels';
 import type { AccessRequest, ParsedDeleteRequest } from '../domain/requests';
-import { listResourceConnections, type PostgresConnection } from '../platform/connections';
-import { buildDeletePlan, RUNNER_IMAGE } from '../platform/plans';
+import {
+  listResourceConnectionSummaries,
+  listResourceConnections,
+  type PostgresConnection,
+} from '../platform/connections';
+import { buildBatchDeletePlan, buildDeletePlan, RUNNER_IMAGE } from '../platform/plans';
 import {
   loadInstallationProjection,
   readInstallation,
@@ -103,17 +107,134 @@ function signalFor(deps: DeleteConnectionDeps): AbortSignal {
 export async function deletePostgresConnection(
   deps: DeleteConnectionDeps,
   request: DeleteConnectionRequest,
-): Promise<{ connection: string }> {
+): Promise<{ connection: string } | { connections: string[] }> {
   assertManagerId(request.currentManagerId, 'current');
   assertManagerId(request.callingManagerId, 'calling');
   if (request.metadata.action !== 'delete-connection')
     throw new PostgresRequestError(400, 'Unsupported PostgreSQL action');
 
+  if ('connectionIds' in request.metadata) {
+    return {
+      connections: await deleteBatchPostgresConnections(
+        deps,
+        request,
+        request.metadata.connectionIds,
+      ),
+    };
+  }
+
+  return {
+    connection: await deleteOnePostgresConnection(deps, request, request.metadata.connectionId),
+  };
+}
+
+async function deleteBatchPostgresConnections(
+  deps: DeleteConnectionDeps,
+  request: DeleteConnectionRequest,
+  requestedIds: string[],
+): Promise<string[]> {
+  const initial = await installed(deps.caller, request.currentManagerId);
+  const requested = requestedIds.map((id) => {
+    const target = initial.connections.find(
+      (connection) =>
+        connection.item.id === id && connection.managerId === request.callingManagerId,
+    );
+    if (!target)
+      throw new PostgresRequestError(404, 'A requested PostgreSQL connection was not found');
+    return target;
+  });
+  const requestedSet = new Set(requestedIds);
+  const approvedEffects = new Map<string, DeleteChoice>();
+
+  for (const [index, target] of requested.entries()) {
+    const remainingPeers = initial.connections.filter(
+      (connection) => !requestedIds.slice(0, index).includes(connection.item.id),
+    );
+    const choice = choiceFor(target, remainingPeers);
+    const decision = await deps.requestApproval({
+      callingManagerId: request.callingManagerId,
+      requestedConnectionId: target.item.id,
+      choices: [choice],
+    });
+    if (!decision.allowed)
+      throw new PostgresRequestError(499, 'PostgreSQL connection deletion was rejected');
+    if (decision.connectionId !== target.item.id)
+      throw new PostgresRequestError(409, 'The selected PostgreSQL connection changed');
+    approvedEffects.set(target.item.id, choice);
+  }
+
+  const refreshed = await installed(deps.caller, request.currentManagerId);
+  const targets = requested.map((before, index) => {
+    const target = refreshed.connections.find(
+      (connection) =>
+        connection.item.id === before.item.id && connection.managerId === request.callingManagerId,
+    );
+    if (!target || fingerprint(target) !== fingerprint(before))
+      throw new PostgresRequestError(409, 'The PostgreSQL connection changed after approval');
+    const remainingPeers = refreshed.connections.filter(
+      (connection) => !requestedIds.slice(0, index).includes(connection.item.id),
+    );
+    const effect = deletionEffect(targetOf(target), remainingPeers.map(targetOf));
+    if (approvedEffects.get(target.item.id)?.effect !== effect)
+      throw new PostgresRequestError(
+        409,
+        'The PostgreSQL cleanup consequence changed after approval',
+      );
+    return { target, effect };
+  });
+
+  const plannedTargets = await Promise.all(
+    targets.map(async ({ target, effect }) => ({
+      target,
+      effect,
+      databaseOwner:
+        effect === 'role-and-database' && target.authority.access === 'database'
+          ? await (deps.databaseOwnerRole ?? defaultDatabaseOwnerRole)(
+              target.resourceId,
+              target.authority.database,
+            )
+          : undefined,
+    })),
+  );
+  const plan = buildBatchDeletePlan({
+    installation: refreshed.installation,
+    targets: plannedTargets,
+  });
+
+  try {
+    await deps.runTracker.startAndWait(
+      {
+        action: 'delete-connection',
+        runner: RUNNER_IMAGE,
+        note: 'PostgreSQL connection cleanup',
+        target: { kind: 'resource', id: refreshed.installation.resource.id },
+        metadata: plan,
+      },
+      deps.onProgress ?? (() => undefined),
+      signalFor(deps),
+    );
+  } catch {
+    throw new PostgresRequestError(500, 'PostgreSQL connection deletion failed');
+  }
+
+  const remaining = await listResourceConnectionSummaries(
+    deps.caller,
+    refreshed.installation.resource.id,
+  );
+  if (remaining.some((connection) => requestedSet.has(connection.id)))
+    throw new PostgresRequestError(500, 'PostgreSQL connections were not deleted');
+  return requestedIds;
+}
+
+async function deleteOnePostgresConnection(
+  deps: DeleteConnectionDeps,
+  request: DeleteConnectionRequest,
+  requested: string | null,
+): Promise<string> {
   const initial = await installed(deps.caller, request.currentManagerId);
   const owned = initial.connections.filter(
     (connection) => connection.managerId === request.callingManagerId,
   );
-  const requested = request.metadata.connectionId;
   if (requested && !owned.some((connection) => connection.item.id === requested)) {
     throw new PostgresRequestError(404, 'PostgreSQL connection was not found');
   }
@@ -190,5 +311,5 @@ export async function deletePostgresConnection(
       throw new PostgresRequestError(500, 'Unable to verify PostgreSQL connection deletion');
     }
   }
-  return { connection: target.item.id };
+  return target.item.id;
 }
