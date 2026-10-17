@@ -1,8 +1,8 @@
 import type { RPC, RPCCaller } from '@ezenki/deploy-commander-installer-interface';
 import { PostgresRequestError } from '../domain/errors';
+import { requireCredentialKeys } from './secrets';
 
 const PAGE_SIZE = 50;
-const ADMIN_USERNAME = /^dc_admin_[0-9a-f]{32}$/;
 
 export type InstallationProjection =
   | { kind: 'not-installed' }
@@ -11,7 +11,6 @@ export type InstallationProjection =
 
 export type PostgresInstallation = {
   resource: RPC.ResourceItem;
-  administrator: { username: string; password: string };
 };
 
 function isResource(value: unknown): value is RPC.ResourceItem {
@@ -100,7 +99,6 @@ export async function readInstallation(
   }
   const config = details?.config;
   const metadata = config?.metadata;
-  const administrator = metadata?.administrator;
   if (
     !isResource(details?.resource) ||
     details.resource.id !== resource.id ||
@@ -118,16 +116,41 @@ export async function readInstallation(
     !metadata ||
     metadata.engine !== 'postgres' ||
     metadata.version !== '15' ||
-    !administrator ||
-    typeof administrator.username !== 'string' ||
-    !ADMIN_USERNAME.test(administrator.username) ||
-    typeof administrator.password !== 'string' ||
-    administrator.password.trim() === ''
+    !Array.isArray(metadata.secret_keys) ||
+    metadata.secret_keys.length !== 2 ||
+    !metadata.secret_keys.includes('USERNAME') ||
+    !metadata.secret_keys.includes('PASSWORD') ||
+    Object.hasOwn(metadata, 'username') ||
+    Object.hasOwn(metadata, 'password') ||
+    Object.hasOwn(metadata, 'administrator')
   ) {
     throw new PostgresRequestError(400, 'PostgreSQL resource configuration is invalid');
   }
-  return {
-    resource,
-    administrator: { username: administrator.username, password: administrator.password },
-  };
+  await requireCredentialKeys(caller, 'resource', resource.id);
+  return { resource };
+}
+
+export async function resolveOwnedPostgresResource(
+  caller: RPCCaller,
+  managerId: string,
+  resourceId: string,
+): Promise<RPC.ResourceItem> {
+  let details: RPC.GetResource;
+  try {
+    details = await caller.getResource(resourceId);
+  } catch {
+    throw new PostgresRequestError(400, 'PostgreSQL resource is invalid');
+  }
+  if (
+    !isResource(details?.resource) ||
+    details.resource.id !== resourceId ||
+    details.resource.manager !== managerId ||
+    details.resource.type !== 'postgres' ||
+    details.resource.name !== 'postgres' ||
+    details.resource.external
+  ) {
+    throw new PostgresRequestError(400, 'PostgreSQL resource is invalid');
+  }
+  await readInstallation(caller, details.resource);
+  return details.resource;
 }

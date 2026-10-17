@@ -1,7 +1,7 @@
 import type { RPC } from '@ezenki/deploy-commander-installer-interface';
 import { describe, expect, it, vi } from 'vitest';
 import { fakeCaller } from '../test/fakes';
-import { loadInstallationProjection, readInstallation } from './resources';
+import { loadInstallationProjection, readInstallation, resolveOwnedPostgresResource } from './resources';
 
 const resource = (id: string, overrides: Partial<RPC.ResourceItem> = {}): RPC.ResourceItem => ({
   id,
@@ -63,7 +63,7 @@ describe('loadInstallationProjection', () => {
 });
 
 describe('readInstallation', () => {
-  it('reads administrator credentials without requiring a platform connection', async () => {
+  it('reads a secret-backed resource without requiring a platform connection', async () => {
     const caller = fakeCaller({
       getResource: vi.fn().mockResolvedValue({
         resource: postgresResource,
@@ -76,20 +76,60 @@ describe('readInstallation', () => {
           metadata: {
             engine: 'postgres',
             version: '15',
-            administrator: {
-              username: 'dc_admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-              password: 'admin-secret',
-            },
+            secret_keys: ['USERNAME', 'PASSWORD'],
           },
         },
       }),
+      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
     });
     await expect(readInstallation(caller, postgresResource)).resolves.toEqual({
       resource: postgresResource,
-      administrator: {
-        username: 'dc_admin_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        password: 'admin-secret',
-      },
+    });
+  });
+
+  it('rejects plaintext credentials or a missing secret key', async () => {
+    const caller = fakeCaller({
+      getResource: vi.fn().mockResolvedValue({
+        resource: postgresResource,
+        config: {
+          id: postgresResource.id,
+          manager: postgresResource.manager,
+          agent: 'agent-1',
+          resource_type: 'postgres',
+          name: 'postgres',
+          metadata: {
+            engine: 'postgres',
+            version: '15',
+            secret_keys: ['USERNAME', 'PASSWORD'],
+            administrator: { username: 'sensitive', password: 'sensitive' },
+          },
+        },
+      }),
+      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME']),
+    });
+    await expect(readInstallation(caller, postgresResource)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('resolves only an exact resource owned by this manager', async () => {
+    const caller = fakeCaller({
+      getResource: vi.fn().mockResolvedValue({
+        resource: postgresResource,
+        config: {
+          id: postgresResource.id,
+          manager: postgresResource.manager,
+          agent: 'agent-1',
+          resource_type: 'postgres',
+          name: 'postgres',
+          metadata: { engine: 'postgres', version: '15', secret_keys: ['USERNAME', 'PASSWORD'] },
+        },
+      }),
+      getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
+    });
+    await expect(resolveOwnedPostgresResource(caller, 'postgres-manager', 'resource-1')).resolves.toEqual(
+      postgresResource,
+    );
+    await expect(resolveOwnedPostgresResource(caller, 'other-manager', 'resource-1')).rejects.toMatchObject({
+      status: 400,
     });
   });
 

@@ -2,9 +2,9 @@ import type { RPC, RPCCaller } from '@ezenki/deploy-commander-installer-interfac
 import { PostgresRequestError } from '../domain/errors';
 import { parseConnectionLabels, type ConnectionAuthority } from '../domain/labels';
 import type { AccessRequest } from '../domain/requests';
+import { requireCredentialKeys } from './secrets';
 
 const PAGE_SIZE = 50;
-const USERNAME = /^dc_user_[0-9a-f]{32}$/;
 
 export type PostgresConnection = {
   item: RPC.ConnectionItem;
@@ -12,8 +12,6 @@ export type PostgresConnection = {
   resourceId: string;
   authority: ConnectionAuthority;
   access: AccessRequest;
-  username: string;
-  password: string;
   metadata: Record<string, unknown>;
 };
 
@@ -126,7 +124,6 @@ export async function readPostgresConnection(
     throw invalidConnection();
   }
   const connection = details?.connection;
-  console.log(connection);
   const metadata = details?.config?.metadata;
   if (
     !validSummary(connection) ||
@@ -139,20 +136,21 @@ export async function readPostgresConnection(
   const authority = parseConnectionLabels(labelsOf(connection));
   const access = parseAccess(metadata.access, authority);
   if (
-    typeof metadata.username !== 'string' ||
-    !USERNAME.test(metadata.username) ||
-    typeof metadata.password !== 'string' ||
-    metadata.password.trim() === ''
+    !Array.isArray(metadata.secret_keys) ||
+    metadata.secret_keys.length !== 2 ||
+    !metadata.secret_keys.includes('USERNAME') ||
+    !metadata.secret_keys.includes('PASSWORD') ||
+    Object.hasOwn(metadata, 'username') ||
+    Object.hasOwn(metadata, 'password')
   )
     throw invalidConnection();
+  await requireCredentialKeys(caller, 'connection', connection.id);
   return {
     item: connection,
     managerId: connection.manager,
     resourceId: connection.resource,
     authority,
     access,
-    username: metadata.username,
-    password: metadata.password,
     metadata,
   };
 }
@@ -189,12 +187,14 @@ export function findCompatibleConnection(
     resourceId: string;
     access: AccessRequest;
     labels: Record<string, string>;
+    groupId?: string;
   },
 ): ConnectionLookup {
   const matches = connections.filter(
     (connection) =>
       connection.managerId === input.managerId &&
       connection.resourceId === input.resourceId &&
+      (connection.item.labels?.custom_deployer_group_id ?? undefined) === input.groupId &&
       sameAccess(connection.access, input.access) &&
       sameLabels(callerLabels(connection.item), input.labels),
   );

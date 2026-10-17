@@ -17,6 +17,7 @@ export function fakeCaller(overrides: Record<string, unknown> = {}) {
     getResource: vi.fn(),
     getConnections: vi.fn(),
     getConnection: vi.fn(),
+    getSecretKeys: vi.fn().mockResolvedValue(['USERNAME', 'PASSWORD']),
     start: vi.fn(),
     getRun: vi.fn(),
     getRunUpdates: vi.fn(),
