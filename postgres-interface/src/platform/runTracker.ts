@@ -40,7 +40,7 @@ export interface RunTracker {
   dispose(): void;
 }
 
-const STATUS_CHECK_MS = 300_000;
+const STATUS_CHECK_MS = 3_000;
 
 function abortError(): Error {
   const error = new Error('PostgreSQL operation aborted');
